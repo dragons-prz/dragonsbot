@@ -126,7 +126,7 @@ Ao aprovar:
 - o recrutamento muda para `approved`
 - o usuario recrutado recebe o cargo `member`
 - o recrutador recebe 8 pontos
-- a DM onde o botao foi clicado e atualizada para mostrar a aprovacao
+- as DMs enviadas aos Founders sao atualizadas para mostrar a aprovacao
 - o botao e desativado para evitar pontos duplicados
 
 ## Banco de dados

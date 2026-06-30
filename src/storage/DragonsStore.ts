@@ -3,6 +3,7 @@ import {
   CreateRecruitmentInput,
   GuildConfig,
   Recruitment,
+  RecruitmentApprovalMessage,
   RecruiterPoints,
   RecruiterRankingEntry,
   RecruiterStats,
@@ -21,6 +22,8 @@ export interface DragonsStore {
   getRecruitment(id: number): Promise<Recruitment | null>;
   findPendingRecruitmentByUser(guildId: string, recruitUserId: string): Promise<Recruitment | null>;
   setRecruitmentApprovalMessage(id: number, messageId: string): Promise<void>;
+  addRecruitmentApprovalMessage(input: RecruitmentApprovalMessage): Promise<void>;
+  getRecruitmentApprovalMessages(recruitmentId: number): Promise<RecruitmentApprovalMessage[]>;
   deletePendingRecruitment(id: number): Promise<void>;
   approveRecruitment(id: number, approvedByUserId: string): Promise<Recruitment | null>;
 

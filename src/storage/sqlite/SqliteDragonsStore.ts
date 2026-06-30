@@ -9,6 +9,7 @@ import {
   DEFAULT_RECRUITER_ROLE_ID,
   GuildConfig,
   Recruitment,
+  RecruitmentApprovalMessage,
   RecruiterPoints,
   RecruiterRankingEntry,
   RecruiterStats,
@@ -50,6 +51,13 @@ interface RankingRow {
   recruiter_user_id: string;
   points: number;
   approved_recruitments: number;
+}
+
+interface ApprovalMessageRow {
+  recruitment_id: number;
+  founder_user_id: string;
+  channel_id: string;
+  message_id: string;
 }
 
 export class SqliteDragonsStore implements DragonsStore {
@@ -110,6 +118,14 @@ export class SqliteDragonsStore implements DragonsStore {
         points INTEGER NOT NULL,
         reason TEXT NOT NULL,
         created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS recruitment_approval_messages (
+        recruitment_id INTEGER NOT NULL,
+        founder_user_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        PRIMARY KEY (recruitment_id, founder_user_id)
       );
     `);
     this.persist();
@@ -202,7 +218,34 @@ export class SqliteDragonsStore implements DragonsStore {
     this.persist();
   }
 
+  async addRecruitmentApprovalMessage(input: RecruitmentApprovalMessage): Promise<void> {
+    this.database.run(
+      `INSERT INTO recruitment_approval_messages (
+        recruitment_id, founder_user_id, channel_id, message_id
+      ) VALUES (?, ?, ?, ?)
+      ON CONFLICT(recruitment_id, founder_user_id)
+      DO UPDATE SET channel_id = excluded.channel_id, message_id = excluded.message_id`,
+      [input.recruitmentId, input.founderUserId, input.channelId, input.messageId]
+    );
+    this.persist();
+  }
+
+  async getRecruitmentApprovalMessages(recruitmentId: number): Promise<RecruitmentApprovalMessage[]> {
+    const rows = this.getAll<ApprovalMessageRow>(
+      "SELECT * FROM recruitment_approval_messages WHERE recruitment_id = ?",
+      [recruitmentId]
+    );
+
+    return rows.map((row) => ({
+      recruitmentId: row.recruitment_id,
+      founderUserId: row.founder_user_id,
+      channelId: row.channel_id,
+      messageId: row.message_id
+    }));
+  }
+
   async deletePendingRecruitment(id: number): Promise<void> {
+    this.database.run("DELETE FROM recruitment_approval_messages WHERE recruitment_id = ?", [id]);
     this.database.run("DELETE FROM recruitments WHERE id = ? AND status = 'pending'", [id]);
     this.persist();
   }

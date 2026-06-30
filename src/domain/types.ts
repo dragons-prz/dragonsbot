@@ -44,6 +44,13 @@ export interface RecruiterRankingEntry extends RecruiterStats {
   position: number;
 }
 
+export interface RecruitmentApprovalMessage {
+  recruitmentId: number;
+  founderUserId: string;
+  channelId: string;
+  messageId: string;
+}
+
 export interface CreateRecruitmentInput {
   guildId: string;
   recruitUserId: string;

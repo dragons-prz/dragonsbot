@@ -17,6 +17,37 @@ import { ButtonHandler, SlashCommand } from "./types";
 
 const APPROVE_PREFIX = "recruitment:approve:";
 
+function buildApprovedMessage(
+  guildId: string,
+  recruitmentId: number,
+  recruitId: string,
+  recruiterId: string,
+  founderId: string,
+  recruiterPoints: number
+) {
+  const disabledRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${APPROVE_PREFIX}${guildId}:${recruitmentId}`)
+      .setLabel("Usuario adicionado")
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(true)
+  );
+
+  const embed = new EmbedBuilder()
+    .setTitle("Recrutamento aprovado")
+    .setColor(0x2f9e44)
+    .addFields(
+      { name: "Usuario recrutado", value: `<@${recruitId}>`, inline: true },
+      { name: "ID copiavel", value: `\`${recruitId}\``, inline: true },
+      { name: "Recrutador", value: `<@${recruiterId}>`, inline: true },
+      { name: "Aprovado por", value: `<@${founderId}>`, inline: true },
+      { name: "Pontos do recrutador", value: String(recruiterPoints), inline: true }
+    )
+    .setTimestamp();
+
+  return { embeds: [embed], components: [disabledRow] };
+}
+
 function buildApprovalMessage(guildId: string, recruitmentId: number, recruitId: string, recruiterId: string) {
   const embed = new EmbedBuilder()
     .setTitle("Recrutamento pendente")
@@ -104,7 +135,10 @@ export const recrutarCommand: SlashCommand = {
     try {
       const approvalMessage = buildApprovalMessage(guildId, recruitment.id, recruitUser.id, recruiter.id);
       const sentMessages = await Promise.allSettled(
-        founders.map((founderMember) => founderMember.send(approvalMessage))
+        founders.map(async (founderMember) => ({
+          founderId: founderMember.id,
+          message: await founderMember.send(approvalMessage)
+        }))
       );
       const firstSent = sentMessages.find((result) => result.status === "fulfilled");
       const failedCount = sentMessages.filter((result) => result.status === "rejected").length;
@@ -113,7 +147,17 @@ export const recrutarCommand: SlashCommand = {
         throw new Error("Nenhum Founder recebeu a DM de aprovacao.");
       }
 
-      await store.setRecruitmentApprovalMessage(recruitment.id, firstSent.value.id);
+      await store.setRecruitmentApprovalMessage(recruitment.id, firstSent.value.message.id);
+      for (const result of sentMessages) {
+        if (result.status === "fulfilled") {
+          await store.addRecruitmentApprovalMessage({
+            recruitmentId: recruitment.id,
+            founderUserId: result.value.founderId,
+            channelId: result.value.message.channelId,
+            messageId: result.value.message.id
+          });
+        }
+      }
 
       await interaction.reply({
         content: [
@@ -213,27 +257,27 @@ export const approveRecruitmentButton: ButtonHandler = {
       `Recrutamento #${approved.id} aprovado`
     );
 
-    const disabledRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`${APPROVE_PREFIX}${approved.guildId}:${approved.id}`)
-        .setLabel("Usuario adicionado")
-        .setStyle(ButtonStyle.Success)
-        .setDisabled(true)
+    const approvedMessage = buildApprovedMessage(
+      approved.guildId,
+      approved.id,
+      approved.recruitUserId,
+      approved.recruiterUserId,
+      founder.id,
+      points.points
+    );
+    const approvalMessages = await store.getRecruitmentApprovalMessages(approved.id);
+    await Promise.allSettled(
+      approvalMessages.map(async (approvalMessage) => {
+        const channel = await interaction.client.channels.fetch(approvalMessage.channelId);
+        if (!channel || !channel.isTextBased()) {
+          return;
+        }
+
+        const message = await channel.messages.fetch(approvalMessage.messageId);
+        await message.edit(approvedMessage);
+      })
     );
 
-    const embed = new EmbedBuilder()
-      .setTitle("Recrutamento aprovado")
-      .setColor(0x2f9e44)
-      .addFields(
-        { name: "Usuario recrutado", value: `<@${approved.recruitUserId}>`, inline: true },
-        { name: "ID copiavel", value: `\`${approved.recruitUserId}\``, inline: true },
-        { name: "Recrutador", value: `<@${approved.recruiterUserId}>`, inline: true },
-        { name: "Aprovado por", value: `<@${founder.id}>`, inline: true },
-        { name: "Pontos do recrutador", value: String(points.points), inline: true }
-      )
-      .setTimestamp();
-
-    await interaction.message.edit({ embeds: [embed], components: [disabledRow] });
     await interaction.editReply(`Recrutamento aprovado. <@${approved.recruiterUserId}> recebeu ${RECRUITMENT_POINTS} pontos.`);
   }
 };
