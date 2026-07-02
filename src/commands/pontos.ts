@@ -11,7 +11,7 @@ export const pontosCommand: SlashCommand = {
   async execute(interaction, { store }) {
     const guildId = getGuildId(interaction);
     const member = requireGuildMember(interaction);
-    const profile = await store.getMemberProfile(guildId, member.id);
+    const { profile } = await store.getMemberProfile(guildId, member.id);
     logger.info("points.viewed", {
       guildId,
       userId: member.id,

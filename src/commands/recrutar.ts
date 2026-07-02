@@ -7,7 +7,7 @@ import {
   MessageFlags,
   SlashCommandBuilder
 } from "discord.js";
-import { HIERARCHY_ROLES, RECRUITMENT_POINTS } from "../domain/types";
+import { RECRUITMENT_POINTS } from "../domain/types";
 import {
   getGuildId,
   memberHasRole,
@@ -388,8 +388,7 @@ export const approveRecruitmentButton: ButtonHandler = {
     }
 
     await (recruitMember as GuildMember).roles.add(memberRole, `Recrutamento aprovado por ${founder.user.tag}`);
-    const recruitedProfile = await store.ensureMemberProfile(guildId, recruitMember.id);
-    const baseRank = HIERARCHY_ROLES[0];
+    const { profile: recruitedProfile, rank: baseRank } = await store.ensureMemberProfile(guildId, recruitMember.id);
     const baseRankRole = await guild.roles.fetch(baseRank.roleId).catch(() => null);
     if (baseRankRole && !recruitMember.roles.cache.has(baseRankRole.id)) {
       await recruitMember.roles.add(baseRankRole, `Rank inicial ${baseRank.name}`).catch((error) => {

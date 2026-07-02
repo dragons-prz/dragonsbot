@@ -3,7 +3,9 @@ import {
   CreateRecruitmentInput,
   GuildConfig,
   ApprovedRecruitmentResult,
+  HierarchyRole,
   MemberProfile,
+  MemberProfileResult,
   MemberRankingEntry,
   Recruitment,
   RecruitmentApprovalMessage,
@@ -17,6 +19,8 @@ export interface DragonsStore {
   getGuildConfig(guildId: string): Promise<GuildConfig>;
   setRoleConfig(guildId: string, key: RoleConfigKey, roleId: string): Promise<GuildConfig>;
   setChannelConfig(guildId: string, key: ChannelConfigKey, channelId: string): Promise<GuildConfig>;
+  seedDefaultHierarchyRoles(guildId: string): Promise<HierarchyRole[]>;
+  getHierarchyRoles(guildId: string): Promise<HierarchyRole[]>;
 
   createRecruitment(input: CreateRecruitmentInput): Promise<Recruitment>;
   getRecruitment(id: number): Promise<Recruitment | null>;
@@ -29,7 +33,7 @@ export interface DragonsStore {
   approveRecruitmentAndAddMemberPoints(id: number, approvedByUserId: string, points: number, reason: string): Promise<ApprovedRecruitmentResult | null>;
 
   addMemberPoints(guildId: string, userId: string, points: number, reason: string): Promise<MemberProfile>;
-  ensureMemberProfile(guildId: string, userId: string): Promise<MemberProfile>;
-  getMemberProfile(guildId: string, userId: string): Promise<MemberProfile>;
+  ensureMemberProfile(guildId: string, userId: string): Promise<MemberProfileResult>;
+  getMemberProfile(guildId: string, userId: string): Promise<MemberProfileResult>;
   getMemberRanking(guildId: string, limit: number): Promise<MemberRankingEntry[]>;
 }

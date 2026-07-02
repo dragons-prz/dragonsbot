@@ -2,16 +2,19 @@ import { cert, getApps, initializeApp, ServiceAccount } from "firebase-admin/app
 import { Firestore, getFirestore, Timestamp } from "firebase-admin/firestore";
 import { readFileSync } from "node:fs";
 import { AppEnv } from "../../config/env";
+import { logger } from "../../utils/logger";
 import {
   ApprovedRecruitmentResult,
   ChannelConfigKey,
   CreateRecruitmentInput,
+  DEFAULT_HIERARCHY_ROLES,
   DEFAULT_FOUNDER_ROLE_ID,
   DEFAULT_MEMBER_ROLE_ID,
   DEFAULT_RECRUITER_ROLE_ID,
-  HIERARCHY_ROLES,
   GuildConfig,
+  HierarchyRole,
   MemberProfile,
+  MemberProfileResult,
   MemberRankingEntry,
   Recruitment,
   RecruitmentApprovalMessage,
@@ -24,6 +27,7 @@ interface GuildConfigDocument {
   founderRoleId: string;
   memberRoleId: string;
   approvalChannelId: string | null;
+  hierarchySeeded?: boolean;
 }
 
 interface RecruitmentDocument {
@@ -54,6 +58,14 @@ interface ApprovalMessageDocument {
   messageId: string;
 }
 
+interface HierarchyRoleDocument {
+  guildId: string;
+  name: string;
+  roleId: string;
+  points: number;
+  order: number;
+}
+
 export class FirestoreDragonsStore implements DragonsStore {
   private db: Firestore;
 
@@ -81,10 +93,18 @@ export class FirestoreDragonsStore implements DragonsStore {
     if (!snapshot.exists) {
       const defaults = this.defaultGuildConfigDocument();
       await ref.set(defaults);
+      await this.seedDefaultHierarchyRoles(guildId);
       return this.mapGuildConfig(guildId, defaults);
     }
 
-    return this.mapGuildConfig(guildId, snapshot.data() as GuildConfigDocument);
+    const data = snapshot.data() as GuildConfigDocument;
+    if (!data.hierarchySeeded) {
+      await this.seedDefaultHierarchyRoles(guildId);
+      await ref.update({ hierarchySeeded: true });
+      data.hierarchySeeded = true;
+    }
+
+    return this.mapGuildConfig(guildId, data);
   }
 
   async setRoleConfig(guildId: string, key: RoleConfigKey, roleId: string): Promise<GuildConfig> {
@@ -107,6 +127,36 @@ export class FirestoreDragonsStore implements DragonsStore {
     await this.ensureGuildConfig(guildId);
     await this.guildConfigRef(guildId).update({ approvalChannelId: channelId });
     return this.getGuildConfig(guildId);
+  }
+
+  async seedDefaultHierarchyRoles(guildId: string): Promise<HierarchyRole[]> {
+    const batch = this.db.batch();
+    for (const role of DEFAULT_HIERARCHY_ROLES) {
+      batch.set(this.hierarchyRoleRef(guildId, role.order), { guildId, ...role }, { merge: true });
+    }
+    batch.set(this.guildConfigRef(guildId), { hierarchySeeded: true }, { merge: true });
+    await batch.commit();
+    logger.info("hierarchy.seeded", {
+      guildId,
+      roles: DEFAULT_HIERARCHY_ROLES.length
+    });
+    return this.getHierarchyRoles(guildId);
+  }
+
+  async getHierarchyRoles(guildId: string): Promise<HierarchyRole[]> {
+    const snapshot = await this.db
+      .collection("hierarchyRoles")
+      .where("guildId", "==", guildId)
+      .get();
+    const roles = snapshot.docs
+      .map((doc) => this.mapHierarchyRole(doc.data() as HierarchyRoleDocument))
+      .sort((a, b) => a.points - b.points || a.order - b.order);
+
+    if (roles.length === 0) {
+      return this.seedDefaultHierarchyRoles(guildId);
+    }
+
+    return roles;
   }
 
   async createRecruitment(input: CreateRecruitmentInput): Promise<Recruitment> {
@@ -254,16 +304,18 @@ export class FirestoreDragonsStore implements DragonsStore {
       };
       const memberRef = this.memberRef(updatedRecruitment.guildId, updatedRecruitment.recruiterUserId);
       const memberSnapshot = await transaction.get(memberRef);
+      const hierarchyRoles = await this.getHierarchyRoles(updatedRecruitment.guildId);
       const currentMember = this.mapMemberFromSnapshot(
         updatedRecruitment.guildId,
         updatedRecruitment.recruiterUserId,
-        memberSnapshot.data() as MemberDocument | undefined
+        memberSnapshot.data() as MemberDocument | undefined,
+        hierarchyRoles
       );
       const previousRankName = currentMember.rankName;
       const previousRankRoleId = currentMember.rankRoleId;
       const nextPoints = currentMember.points + points;
       const nextRecruitments = currentMember.recruitments + 1;
-      const nextRank = this.getRankForPoints(nextPoints);
+      const nextRank = this.getRankForPoints(nextPoints, hierarchyRoles);
       const updatedMember: MemberProfile = {
         guildId: updatedRecruitment.guildId,
         userId: updatedRecruitment.recruiterUserId,
@@ -311,9 +363,10 @@ export class FirestoreDragonsStore implements DragonsStore {
     return this.db.runTransaction(async (transaction) => {
       const memberRef = this.memberRef(guildId, userId);
       const snapshot = await transaction.get(memberRef);
-      const currentMember = this.mapMemberFromSnapshot(guildId, userId, snapshot.data() as MemberDocument | undefined);
+      const hierarchyRoles = await this.getHierarchyRoles(guildId);
+      const currentMember = this.mapMemberFromSnapshot(guildId, userId, snapshot.data() as MemberDocument | undefined, hierarchyRoles);
       const nextPoints = currentMember.points + points;
-      const nextRank = this.getRankForPoints(nextPoints);
+      const nextRank = this.getRankForPoints(nextPoints, hierarchyRoles);
       const updatedMember: MemberProfile = {
         guildId,
         userId,
@@ -338,15 +391,17 @@ export class FirestoreDragonsStore implements DragonsStore {
     });
   }
 
-  async ensureMemberProfile(guildId: string, userId: string): Promise<MemberProfile> {
+  async ensureMemberProfile(guildId: string, userId: string): Promise<MemberProfileResult> {
     const now = new Date().toISOString();
     const ref = this.memberRef(guildId, userId);
+    const hierarchyRoles = await this.getHierarchyRoles(guildId);
     const snapshot = await ref.get();
     if (snapshot.exists) {
-      return this.mapMemberFromSnapshot(guildId, userId, snapshot.data() as MemberDocument);
+      const profile = this.mapMemberFromSnapshot(guildId, userId, snapshot.data() as MemberDocument, hierarchyRoles);
+      return { profile, rank: this.getRankForPoints(profile.points, hierarchyRoles) };
     }
 
-    const baseRank = this.getRankForPoints(0);
+    const baseRank = this.getRankForPoints(0, hierarchyRoles);
     const profile: MemberProfile = {
       guildId,
       userId,
@@ -357,16 +412,19 @@ export class FirestoreDragonsStore implements DragonsStore {
       updatedAt: now
     };
     await ref.set(profile);
-    return profile;
+    return { profile, rank: baseRank };
   }
 
-  async getMemberProfile(guildId: string, userId: string): Promise<MemberProfile> {
+  async getMemberProfile(guildId: string, userId: string): Promise<MemberProfileResult> {
+    const hierarchyRoles = await this.getHierarchyRoles(guildId);
     const snapshot = await this.memberRef(guildId, userId).get();
-    return this.mapMemberFromSnapshot(guildId, userId, snapshot.data() as MemberDocument | undefined);
+    const profile = this.mapMemberFromSnapshot(guildId, userId, snapshot.data() as MemberDocument | undefined, hierarchyRoles);
+    return { profile, rank: this.getRankForPoints(profile.points, hierarchyRoles) };
   }
 
   async getMemberRanking(guildId: string, limit: number): Promise<MemberRankingEntry[]> {
     const safeLimit = Math.max(1, Math.min(limit, 25));
+    const hierarchyRoles = await this.getHierarchyRoles(guildId);
     const snapshot = await this.db
       .collection("members")
       .where("guildId", "==", guildId)
@@ -375,7 +433,7 @@ export class FirestoreDragonsStore implements DragonsStore {
     return snapshot.docs
       .map((doc, index) => ({
         position: index + 1,
-        ...this.mapMemberFromSnapshot(guildId, doc.id.split("_").slice(1).join("_"), doc.data() as MemberDocument)
+        ...this.mapMemberFromSnapshot(guildId, doc.id.split("_").slice(1).join("_"), doc.data() as MemberDocument, hierarchyRoles)
       }))
       .filter((entry) => entry.points > 0)
       .sort((a, b) => b.points - a.points || b.recruitments - a.recruitments || a.userId.localeCompare(b.userId))
@@ -404,7 +462,8 @@ export class FirestoreDragonsStore implements DragonsStore {
       recruiterRoleId: DEFAULT_RECRUITER_ROLE_ID,
       founderRoleId: DEFAULT_FOUNDER_ROLE_ID,
       memberRoleId: DEFAULT_MEMBER_ROLE_ID,
-      approvalChannelId: null
+      approvalChannelId: null,
+      hierarchySeeded: false
     };
   }
 
@@ -414,7 +473,8 @@ export class FirestoreDragonsStore implements DragonsStore {
       recruiterRoleId: data.recruiterRoleId,
       founderRoleId: data.founderRoleId,
       memberRoleId: data.memberRoleId,
-      approvalChannelId: data.approvalChannelId ?? null
+      approvalChannelId: data.approvalChannelId ?? null,
+      hierarchySeeded: data.hierarchySeeded ?? false
     };
   }
 
@@ -432,9 +492,14 @@ export class FirestoreDragonsStore implements DragonsStore {
     };
   }
 
-  private mapMemberFromSnapshot(guildId: string, userId: string, data?: Partial<MemberDocument>): MemberProfile {
+  private mapMemberFromSnapshot(
+    guildId: string,
+    userId: string,
+    data: Partial<MemberDocument> | undefined,
+    hierarchyRoles: HierarchyRole[]
+  ): MemberProfile {
     const points = data?.points ?? 0;
-    const rank = this.getRankForPoints(points);
+    const rank = this.getRankForPoints(points, hierarchyRoles);
     return {
       guildId,
       userId,
@@ -446,8 +511,18 @@ export class FirestoreDragonsStore implements DragonsStore {
     };
   }
 
-  private getRankForPoints(points: number) {
-    return [...HIERARCHY_ROLES].reverse().find((rank) => points >= rank.points) ?? HIERARCHY_ROLES[0];
+  private getRankForPoints(points: number, hierarchyRoles: HierarchyRole[]): HierarchyRole {
+    const sortedRoles = [...hierarchyRoles].sort((a, b) => b.points - a.points || b.order - a.order);
+    return sortedRoles.find((rank) => points >= rank.points) ?? DEFAULT_HIERARCHY_ROLES[0];
+  }
+
+  private mapHierarchyRole(data: HierarchyRoleDocument): HierarchyRole {
+    return {
+      name: data.name,
+      roleId: data.roleId,
+      points: data.points,
+      order: data.order
+    };
   }
 
   private guildConfigRef(guildId: string) {
@@ -464,6 +539,10 @@ export class FirestoreDragonsStore implements DragonsStore {
 
   private memberRef(guildId: string, userId: string) {
     return this.db.collection("members").doc(`${guildId}_${userId}`);
+  }
+
+  private hierarchyRoleRef(guildId: string, order: number) {
+    return this.db.collection("hierarchyRoles").doc(`${guildId}_${order}`);
   }
 
   private memberPointEventRef() {

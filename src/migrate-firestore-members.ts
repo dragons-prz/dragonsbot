@@ -1,5 +1,5 @@
 import { getFirestore } from "firebase-admin/firestore";
-import { HIERARCHY_ROLES } from "./domain/types";
+import { DEFAULT_HIERARCHY_ROLES, HierarchyRole } from "./domain/types";
 import { loadEnv } from "./config/env";
 import { FirestoreDragonsStore } from "./storage/firestore/FirestoreDragonsStore";
 
@@ -18,8 +18,8 @@ interface LegacyPointEventDocument {
   createdAtTimestamp?: unknown;
 }
 
-function rankForPoints(points: number) {
-  return [...HIERARCHY_ROLES].reverse().find((rank) => points >= rank.points) ?? HIERARCHY_ROLES[0];
+function rankForPoints(points: number, hierarchyRoles: HierarchyRole[]) {
+  return [...hierarchyRoles].reverse().find((rank) => points >= rank.points) ?? DEFAULT_HIERARCHY_ROLES[0];
 }
 
 async function main(): Promise<void> {
@@ -34,13 +34,19 @@ async function main(): Promise<void> {
 
   for (const doc of legacyPoints.docs) {
     const data = doc.data() as LegacyRecruiterPointsDocument;
+    const hierarchySnapshot = await db.collection("hierarchyRoles").where("guildId", "==", data.guildId).get();
+    const hierarchyRoles = hierarchySnapshot.empty
+      ? DEFAULT_HIERARCHY_ROLES
+      : hierarchySnapshot.docs
+        .map((roleDoc) => roleDoc.data() as HierarchyRole)
+        .sort((a, b) => a.points - b.points || a.order - b.order);
     const recruitments = await db
       .collection("recruitments")
       .where("guildId", "==", data.guildId)
       .where("recruiterUserId", "==", data.recruiterUserId)
       .where("status", "==", "approved")
       .get();
-    const rank = rankForPoints(data.points);
+    const rank = rankForPoints(data.points, hierarchyRoles);
 
     batch.set(
       db.collection("members").doc(`${data.guildId}_${data.recruiterUserId}`),
