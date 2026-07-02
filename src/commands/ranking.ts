@@ -1,5 +1,6 @@
 import { EmbedBuilder, MessageFlags, SlashCommandBuilder } from "discord.js";
 import { getGuildId } from "../utils/discord";
+import { logger } from "../utils/logger";
 import { SlashCommand } from "./types";
 
 export const rankingCommand: SlashCommand = {
@@ -19,6 +20,13 @@ export const rankingCommand: SlashCommand = {
     const guildId = getGuildId(interaction);
     const limit = interaction.options.getInteger("limite") ?? 10;
     const ranking = await store.getRecruiterRanking(guildId, limit);
+    logger.info("ranking.viewed", {
+      guildId,
+      userId: interaction.user.id,
+      userTag: interaction.user.tag,
+      requestedLimit: limit,
+      returnedCount: ranking.length
+    });
 
     if (ranking.length === 0) {
       await interaction.reply({

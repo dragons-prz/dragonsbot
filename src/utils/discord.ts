@@ -7,6 +7,7 @@ import {
   RepliableInteraction,
   TextBasedChannel
 } from "discord.js";
+import { logger } from "./logger";
 
 export function getGuildId(interaction: ChatInputCommandInteraction | ButtonInteraction): string {
   if (!interaction.guildId || !interaction.guild) {
@@ -50,7 +51,10 @@ export async function safeReply(
     await interaction.reply({ content, flags: ephemeral ? MessageFlags.Ephemeral : undefined });
   } catch (error) {
     if (typeof error === "object" && error && "code" in error && (error.code === 10062 || error.code === 40060)) {
-      console.warn("Nao foi possivel responder a interacao porque ela expirou ou ja foi respondida.");
+      logger.warn("interaction.reply_skipped", {
+        reason: "expired_or_already_replied",
+        code: error.code
+      });
       return;
     }
 

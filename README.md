@@ -32,8 +32,6 @@ Configure:
 DISCORD_CLIENT_ID=1487313181507588117
 DISCORD_TOKEN=seu_token
 DISCORD_GUILD_ID=id_do_servidor_para_testes
-DATABASE_PROVIDER=firestore
-SQLITE_PATH=./data/dragons.sqlite
 FIREBASE_SERVICE_ACCOUNT_PATH=/caminho/seguro/service-account.json
 ```
 
@@ -42,7 +40,6 @@ FIREBASE_SERVICE_ACCOUNT_PATH=/caminho/seguro/service-account.json
 Para o Firebase, use o arquivo JSON da service account baixado no console do Firebase:
 
 ```env
-DATABASE_PROVIDER=firestore
 FIREBASE_SERVICE_ACCOUNT_PATH=/caminho/seguro/service-account.json
 ```
 
@@ -139,20 +136,7 @@ Ao aprovar:
 
 ## Banco de dados
 
-O bot suporta Firestore e SQLite pela interface `DragonsStore`.
-
-Para producao com Firebase:
-
-```env
-DATABASE_PROVIDER=firestore
-```
-
-Para testes locais com SQLite:
-
-```env
-DATABASE_PROVIDER=sqlite
-SQLITE_PATH=./data/dragons.sqlite
-```
+O bot usa Firebase Firestore. A interface `DragonsStore` foi mantida para permitir trocar de banco futuramente sem alterar os comandos.
 
 Colecoes usadas no Firestore:
 
@@ -163,24 +147,30 @@ Colecoes usadas no Firestore:
 - `counters`
 - subcolecao `recruitments/{id}/approvalMessages`
 
-O provider SQLite continua disponivel para testes locais.
+## Logs
 
-## Migrar SQLite para Firestore
-
-Com as envs do Firebase preenchidas e `SQLITE_PATH` apontando para o arquivo local:
+O bot escreve logs estruturados em JSON no console, um evento por linha. Em VPS com systemd, use:
 
 ```bash
-npm run migrate:sqlite-to-firestore
+journalctl -u dragons-bot -f
 ```
 
-O script migra:
+Eventos principais:
 
-- configuracoes dos servidores
-- recrutamentos
-- pontos dos recrutadores
-- historico de eventos de pontos
-- mensagens de aprovacao por DM
-- contador do proximo ID de recrutamento
+- `interaction.command.received`
+- `interaction.command.completed`
+- `interaction.button.received`
+- `interaction.button.completed`
+- `recruitment.requested`
+- `recruitment.created`
+- `recruitment.approval_dm_sent`
+- `recruitment.approved`
+- `recruitment.blocked`
+- `recruitment.approval_blocked`
+- `config.role_set`
+- `config.channel_set`
+- `points.viewed`
+- `ranking.viewed`
 
 ## Validacao
 

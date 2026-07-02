@@ -6,6 +6,7 @@ import {
 } from "discord.js";
 import { ChannelConfigKey, RoleConfigKey } from "../domain/types";
 import { memberIsAdmin, requireGuildMember } from "../utils/discord";
+import { logger } from "../utils/logger";
 import { SlashCommand } from "./types";
 
 export const configCommand: SlashCommand = {
@@ -58,6 +59,12 @@ export const configCommand: SlashCommand = {
   async execute(interaction, { store }) {
     const member = requireGuildMember(interaction);
     if (!memberIsAdmin(member)) {
+      logger.warn("config.blocked", {
+        reason: "missing_admin_permission",
+        guildId: interaction.guildId,
+        userId: member.id,
+        userTag: member.user.tag
+      });
       await interaction.reply({ content: "Apenas administradores podem usar este comando.", flags: MessageFlags.Ephemeral });
       return;
     }
@@ -73,6 +80,13 @@ export const configCommand: SlashCommand = {
       const key = interaction.options.getString("tipo", true) as RoleConfigKey;
       const role = interaction.options.getRole("role", true);
       await store.setRoleConfig(guildId, key, role.id);
+      logger.info("config.role_set", {
+        guildId,
+        adminUserId: member.id,
+        adminUserTag: member.user.tag,
+        key,
+        roleId: role.id
+      });
       await interaction.reply({ content: `Cargo \`${key}\` configurado como <@&${role.id}>.`, flags: MessageFlags.Ephemeral });
       return;
     }
@@ -81,11 +95,23 @@ export const configCommand: SlashCommand = {
       const key = interaction.options.getString("tipo", true) as ChannelConfigKey;
       const channel = interaction.options.getChannel("channel", true);
       await store.setChannelConfig(guildId, key, channel.id);
+      logger.info("config.channel_set", {
+        guildId,
+        adminUserId: member.id,
+        adminUserTag: member.user.tag,
+        key,
+        channelId: channel.id
+      });
       await interaction.reply({ content: `Canal \`${key}\` configurado como <#${channel.id}>.`, flags: MessageFlags.Ephemeral });
       return;
     }
 
     const config = await store.getGuildConfig(guildId);
+    logger.info("config.show", {
+      guildId,
+      adminUserId: member.id,
+      adminUserTag: member.user.tag
+    });
     await interaction.reply({
       content: [
         "**Configuracao atual do Dragons**",

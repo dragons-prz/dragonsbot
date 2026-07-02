@@ -2,13 +2,15 @@ import {
   Client,
   Collection,
   Events,
-  GatewayIntentBits
+  GatewayIntentBits,
+  MessageFlags
 } from "discord.js";
 import { loadEnv } from "./config/env";
 import { buttonHandlers, commands } from "./commands";
 import { SlashCommand } from "./commands/types";
 import { createStore } from "./storage/createStore";
 import { safeReply } from "./utils/discord";
+import { logger } from "./utils/logger";
 
 async function main(): Promise<void> {
   const env = loadEnv();
@@ -25,33 +27,89 @@ async function main(): Promise<void> {
   });
 
   client.once(Events.ClientReady, (readyClient) => {
-    console.log(`Dragons online como ${readyClient.user.tag}`);
+    logger.info("bot.ready", {
+      userId: readyClient.user.id,
+      tag: readyClient.user.tag
+    });
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
+    const startedAt = Date.now();
     try {
       if (interaction.isChatInputCommand()) {
+        logger.info("interaction.command.received", {
+          commandName: interaction.commandName,
+          interactionId: interaction.id,
+          guildId: interaction.guildId,
+          channelId: interaction.channelId,
+          userId: interaction.user.id,
+          userTag: interaction.user.tag
+        });
+
         const command = commandMap.get(interaction.commandName);
         if (!command) {
-          await interaction.reply({ content: "Comando nao encontrado.", ephemeral: true });
+          await interaction.reply({ content: "Comando nao encontrado.", flags: MessageFlags.Ephemeral });
+          logger.warn("interaction.command.unknown", {
+            commandName: interaction.commandName,
+            interactionId: interaction.id,
+            userId: interaction.user.id
+          });
           return;
         }
 
         await command.execute(interaction, { store });
+        logger.info("interaction.command.completed", {
+          commandName: interaction.commandName,
+          interactionId: interaction.id,
+          guildId: interaction.guildId,
+          userId: interaction.user.id,
+          durationMs: Date.now() - startedAt
+        });
         return;
       }
 
       if (interaction.isButton()) {
+        logger.info("interaction.button.received", {
+          customId: interaction.customId,
+          interactionId: interaction.id,
+          guildId: interaction.guildId,
+          channelId: interaction.channelId,
+          userId: interaction.user.id,
+          userTag: interaction.user.tag
+        });
+
         const handler = buttonHandlers.find((item) => interaction.customId.startsWith(item.customIdPrefix));
         if (!handler) {
-          await interaction.reply({ content: "Acao nao reconhecida.", ephemeral: true });
+          await interaction.reply({ content: "Acao nao reconhecida.", flags: MessageFlags.Ephemeral });
+          logger.warn("interaction.button.unknown", {
+            customId: interaction.customId,
+            interactionId: interaction.id,
+            userId: interaction.user.id
+          });
           return;
         }
 
         await handler.execute(interaction, { store });
+        logger.info("interaction.button.completed", {
+          customId: interaction.customId,
+          interactionId: interaction.id,
+          guildId: interaction.guildId,
+          userId: interaction.user.id,
+          durationMs: Date.now() - startedAt
+        });
       }
     } catch (error) {
-      console.error("Erro ao processar interacao:", error);
+      logger.error("interaction.failed", error, {
+        interactionId: interaction.id,
+        guildId: interaction.guildId,
+        channelId: interaction.channelId,
+        userId: interaction.user.id,
+        isCommand: interaction.isChatInputCommand(),
+        commandName: interaction.isChatInputCommand() ? interaction.commandName : undefined,
+        isButton: interaction.isButton(),
+        customId: interaction.isButton() ? interaction.customId : undefined,
+        durationMs: Date.now() - startedAt
+      });
       if (interaction.isRepliable()) {
         await safeReply(interaction, "Ocorreu um erro ao processar esta acao.");
       }
@@ -59,7 +117,7 @@ async function main(): Promise<void> {
   });
 
   const shutdown = async () => {
-    console.log("Encerrando Dragons...");
+    logger.info("bot.shutdown");
     client.destroy();
     await store.close();
     process.exit(0);
@@ -72,6 +130,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  console.error("Falha ao iniciar o bot:", error);
+  logger.error("bot.start_failed", error);
   process.exit(1);
 });

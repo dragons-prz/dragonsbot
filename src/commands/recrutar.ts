@@ -13,6 +13,7 @@ import {
   memberHasRole,
   requireGuildMember
 } from "../utils/discord";
+import { logger } from "../utils/logger";
 import { ButtonHandler, SlashCommand } from "./types";
 
 const APPROVE_PREFIX = "recruitment:approve:";
@@ -87,19 +88,50 @@ export const recrutarCommand: SlashCommand = {
     const config = await store.getGuildConfig(guildId);
 
     if (!memberHasRole(recruiter, config.recruiterRoleId)) {
+      logger.warn("recruitment.blocked", {
+        reason: "missing_recruiter_role",
+        guildId,
+        recruiterUserId: recruiter.id,
+        recruiterUserTag: recruiter.user.tag,
+        requiredRoleId: config.recruiterRoleId
+      });
       await interaction.editReply("Voce nao possui o cargo de recrutamento.");
       return;
     }
 
     const recruitUser = interaction.options.getUser("usuario", true);
+    logger.info("recruitment.requested", {
+      guildId,
+      recruiterUserId: recruiter.id,
+      recruiterUserTag: recruiter.user.tag,
+      recruitUserId: recruitUser.id,
+      recruitUserTag: recruitUser.tag
+    });
 
     const recruitMember = await interaction.guild!.members.fetch(recruitUser.id).catch(() => null);
     if (!recruitMember) {
+      logger.warn("recruitment.blocked", {
+        reason: "recruit_not_in_guild",
+        guildId,
+        recruiterUserId: recruiter.id,
+        recruiterUserTag: recruiter.user.tag,
+        recruitUserId: recruitUser.id,
+        recruitUserTag: recruitUser.tag
+      });
       await interaction.editReply("O usuario informado nao esta no servidor.");
       return;
     }
 
     if (recruitMember.roles.cache.has(config.memberRoleId)) {
+      logger.warn("recruitment.blocked", {
+        reason: "recruit_already_member",
+        guildId,
+        recruiterUserId: recruiter.id,
+        recruiterUserTag: recruiter.user.tag,
+        recruitUserId: recruitUser.id,
+        recruitUserTag: recruitUser.tag,
+        memberRoleId: config.memberRoleId
+      });
       await interaction.editReply("Este usuario ja possui o cargo de membro.");
       return;
     }
@@ -107,8 +139,22 @@ export const recrutarCommand: SlashCommand = {
     const pending = await store.findPendingRecruitmentByUser(guildId, recruitUser.id);
     if (pending) {
       if (!pending.approvalMessageId) {
+        logger.warn("recruitment.pending_orphan_deleted", {
+          guildId,
+          recruitmentId: pending.id,
+          recruitUserId: recruitUser.id
+        });
         await store.deletePendingRecruitment(pending.id);
       } else {
+        logger.warn("recruitment.blocked", {
+          reason: "pending_exists",
+          guildId,
+          recruitmentId: pending.id,
+          recruiterUserId: recruiter.id,
+          recruiterUserTag: recruiter.user.tag,
+          recruitUserId: recruitUser.id,
+          recruitUserTag: recruitUser.tag
+        });
         await interaction.editReply(`Ja existe um recrutamento pendente para este usuario (#${pending.id}).`);
         return;
       }
@@ -118,6 +164,15 @@ export const recrutarCommand: SlashCommand = {
       (member) => !member.user.bot && member.roles.cache.has(config.founderRoleId)
     );
     if (founders.size === 0) {
+      logger.warn("recruitment.blocked", {
+        reason: "no_founders_found",
+        guildId,
+        recruiterUserId: recruiter.id,
+        recruiterUserTag: recruiter.user.tag,
+        recruitUserId: recruitUser.id,
+        recruitUserTag: recruitUser.tag,
+        founderRoleId: config.founderRoleId
+      });
       await interaction.editReply("Nao encontrei nenhum Founder para receber a aprovacao por DM.");
       return;
     }
@@ -126,6 +181,15 @@ export const recrutarCommand: SlashCommand = {
       guildId,
       recruitUserId: recruitUser.id,
       recruiterUserId: recruiter.id
+    });
+    logger.info("recruitment.created", {
+      guildId,
+      recruitmentId: recruitment.id,
+      recruiterUserId: recruiter.id,
+      recruiterUserTag: recruiter.user.tag,
+      recruitUserId: recruitUser.id,
+      recruitUserTag: recruitUser.tag,
+      founderCount: founders.size
     });
 
     try {
@@ -138,6 +202,7 @@ export const recrutarCommand: SlashCommand = {
       );
       const firstSent = sentMessages.find((result) => result.status === "fulfilled");
       const failedCount = sentMessages.filter((result) => result.status === "rejected").length;
+      const sentCount = sentMessages.length - failedCount;
 
       if (!firstSent || firstSent.status !== "fulfilled") {
         throw new Error("Nenhum Founder recebeu a DM de aprovacao.");
@@ -157,13 +222,30 @@ export const recrutarCommand: SlashCommand = {
 
       await interaction.editReply(
         [
-          `Recrutamento #${recruitment.id} enviado por DM para ${sentMessages.length - failedCount} Founder(s).`,
+          `Recrutamento #${recruitment.id} enviado por DM para ${sentCount} Founder(s).`,
           failedCount > 0 ? `${failedCount} Founder(s) nao puderam receber DM do bot.` : null
         ].filter(Boolean).join("\n")
       );
+      logger.info("recruitment.approval_dm_sent", {
+        guildId,
+        recruitmentId: recruitment.id,
+        recruiterUserId: recruiter.id,
+        recruiterUserTag: recruiter.user.tag,
+        recruitUserId: recruitUser.id,
+        recruitUserTag: recruitUser.tag,
+        sentCount,
+        failedCount
+      });
     } catch (error) {
       await store.deletePendingRecruitment(recruitment.id);
-      console.error("Falha ao enviar DMs de aprovacao:", error);
+      logger.error("recruitment.approval_dm_failed", error, {
+        guildId,
+        recruitmentId: recruitment.id,
+        recruiterUserId: recruiter.id,
+        recruiterUserTag: recruiter.user.tag,
+        recruitUserId: recruitUser.id,
+        recruitUserTag: recruitUser.tag
+      });
       await interaction.editReply(
         [
           "Nao consegui enviar a ficha por DM para nenhum Founder.",
@@ -182,6 +264,11 @@ export const approveRecruitmentButton: ButtonHandler = {
     const [guildId, recruitmentIdRaw] = interaction.customId.slice(APPROVE_PREFIX.length).split(":");
     const recruitmentId = Number(recruitmentIdRaw);
     if (!guildId || !Number.isInteger(recruitmentId)) {
+      logger.warn("recruitment.approval_button_invalid", {
+        customId: interaction.customId,
+        userId: interaction.user.id,
+        userTag: interaction.user.tag
+      });
       await interaction.reply({ content: "Recrutamento invalido." });
       return;
     }
@@ -190,12 +277,26 @@ export const approveRecruitmentButton: ButtonHandler = {
 
     const guild = await interaction.client.guilds.fetch(guildId).catch(() => null);
     if (!guild) {
+      logger.warn("recruitment.approval_blocked", {
+        reason: "guild_not_found",
+        guildId,
+        recruitmentId,
+        founderUserId: interaction.user.id,
+        founderUserTag: interaction.user.tag
+      });
       await interaction.editReply("Servidor do recrutamento nao encontrado.");
       return;
     }
 
     const founder = await guild.members.fetch(interaction.user.id).catch(() => null);
     if (!founder) {
+      logger.warn("recruitment.approval_blocked", {
+        reason: "founder_not_in_guild",
+        guildId,
+        recruitmentId,
+        founderUserId: interaction.user.id,
+        founderUserTag: interaction.user.tag
+      });
       await interaction.editReply("Nao consegui validar seu usuario no servidor.");
       return;
     }
@@ -203,35 +304,83 @@ export const approveRecruitmentButton: ButtonHandler = {
     const config = await store.getGuildConfig(guildId);
 
     if (!memberHasRole(founder, config.founderRoleId)) {
+      logger.warn("recruitment.approval_blocked", {
+        reason: "missing_founder_role",
+        guildId,
+        recruitmentId,
+        founderUserId: founder.id,
+        founderUserTag: founder.user.tag,
+        requiredRoleId: config.founderRoleId
+      });
       await interaction.editReply("Apenas Founders podem confirmar recrutamentos.");
       return;
     }
 
     const recruitment = await store.getRecruitment(recruitmentId);
     if (!recruitment || recruitment.guildId !== guildId) {
+      logger.warn("recruitment.approval_blocked", {
+        reason: "recruitment_not_found",
+        guildId,
+        recruitmentId,
+        founderUserId: founder.id,
+        founderUserTag: founder.user.tag
+      });
       await interaction.editReply("Recrutamento nao encontrado.");
       return;
     }
 
     if (recruitment.status !== "pending") {
+      logger.warn("recruitment.approval_blocked", {
+        reason: "already_approved",
+        guildId,
+        recruitmentId,
+        founderUserId: founder.id,
+        founderUserTag: founder.user.tag,
+        status: recruitment.status
+      });
       await interaction.editReply("Este recrutamento ja foi aprovado.");
       return;
     }
 
     const recruitMember = await guild.members.fetch(recruitment.recruitUserId).catch(() => null);
     if (!recruitMember) {
+      logger.warn("recruitment.approval_blocked", {
+        reason: "recruit_not_in_guild",
+        guildId,
+        recruitmentId,
+        founderUserId: founder.id,
+        founderUserTag: founder.user.tag,
+        recruitUserId: recruitment.recruitUserId
+      });
       await interaction.editReply("O usuario recrutado saiu do servidor ou nao foi encontrado.");
       return;
     }
+    const recruiterMember = await guild.members.fetch(recruitment.recruiterUserId).catch(() => null);
 
     const botMember = await guild.members.fetchMe();
     const memberRole = await guild.roles.fetch(config.memberRoleId).catch(() => null);
     if (!memberRole) {
+      logger.warn("recruitment.approval_blocked", {
+        reason: "member_role_not_found",
+        guildId,
+        recruitmentId,
+        founderUserId: founder.id,
+        founderUserTag: founder.user.tag,
+        memberRoleId: config.memberRoleId
+      });
       await interaction.editReply("O cargo de membro configurado nao foi encontrado.");
       return;
     }
 
     if (!memberRole.editable || botMember.roles.highest.comparePositionTo(memberRole) <= 0) {
+      logger.warn("recruitment.approval_blocked", {
+        reason: "member_role_not_editable",
+        guildId,
+        recruitmentId,
+        founderUserId: founder.id,
+        founderUserTag: founder.user.tag,
+        memberRoleId: config.memberRoleId
+      });
       await interaction.editReply("Nao consigo gerenciar o cargo de membro configurado. Verifique a hierarquia de cargos.");
       return;
     }
@@ -245,6 +394,13 @@ export const approveRecruitmentButton: ButtonHandler = {
       `Recrutamento #${recruitment.id} aprovado`
     );
     if (!approval) {
+      logger.warn("recruitment.approval_blocked", {
+        reason: "transaction_already_approved",
+        guildId,
+        recruitmentId,
+        founderUserId: founder.id,
+        founderUserTag: founder.user.tag
+      });
       await interaction.editReply("Este recrutamento ja foi aprovado.");
       return;
     }
@@ -259,7 +415,7 @@ export const approveRecruitmentButton: ButtonHandler = {
       recruiterPoints.points
     );
     const approvalMessages = await store.getRecruitmentApprovalMessages(approved.id);
-    await Promise.allSettled(
+    const updateResults = await Promise.allSettled(
       approvalMessages.map(async (approvalMessage) => {
         const channel = await interaction.client.channels.fetch(approvalMessage.channelId);
         if (!channel || !channel.isTextBased()) {
@@ -270,6 +426,24 @@ export const approveRecruitmentButton: ButtonHandler = {
         await message.edit(approvedMessage);
       })
     );
+    const updatedMessages = updateResults.filter((result) => result.status === "fulfilled").length;
+    const failedMessageUpdates = updateResults.length - updatedMessages;
+
+    logger.info("recruitment.approved", {
+      guildId,
+      recruitmentId: approved.id,
+      founderUserId: founder.id,
+      founderUserTag: founder.user.tag,
+      recruiterUserId: approved.recruiterUserId,
+      recruiterUserTag: recruiterMember?.user.tag,
+      recruitUserId: approved.recruitUserId,
+      recruitUserTag: recruitMember.user.tag,
+      pointsAdded: RECRUITMENT_POINTS,
+      recruiterTotalPoints: recruiterPoints.points,
+      approvalMessages: approvalMessages.length,
+      updatedMessages,
+      failedMessageUpdates
+    });
 
     await interaction.editReply(`Recrutamento aprovado. <@${approved.recruiterUserId}> recebeu ${RECRUITMENT_POINTS} pontos.`);
   }

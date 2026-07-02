@@ -1,5 +1,6 @@
 import { MessageFlags, SlashCommandBuilder } from "discord.js";
 import { getGuildId, requireGuildMember } from "../utils/discord";
+import { logger } from "../utils/logger";
 import { SlashCommand } from "./types";
 
 export const pontosCommand: SlashCommand = {
@@ -11,6 +12,13 @@ export const pontosCommand: SlashCommand = {
     const guildId = getGuildId(interaction);
     const member = requireGuildMember(interaction);
     const stats = await store.getRecruiterStats(guildId, member.id);
+    logger.info("points.viewed", {
+      guildId,
+      userId: member.id,
+      userTag: member.user.tag,
+      points: stats.points,
+      approvedRecruitments: stats.approvedRecruitments
+    });
 
     await interaction.reply({
       content: [

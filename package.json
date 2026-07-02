@@ -7,8 +7,7 @@
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "deploy:commands": "tsx src/deploy-commands.ts",
-    "migrate:sqlite-to-firestore": "tsx src/migrate-sqlite-to-firestore.ts"
+    "deploy:commands": "tsx src/deploy-commands.ts"
   },
   "keywords": [
     "discord",
@@ -20,12 +19,10 @@
   "dependencies": {
     "discord.js": "^14.26.4",
     "dotenv": "^16.4.7",
-    "firebase-admin": "^14.1.0",
-    "sql.js": "^1.12.0"
+    "firebase-admin": "^14.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.7",
-    "@types/sql.js": "^1.4.9",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }
