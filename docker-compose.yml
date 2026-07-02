@@ -1,0 +1,9 @@
+services:
+  dragons-bot:
+    build: .
+    container_name: dragons-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./firebase-service-account.json:/app/firebase-service-account.json:ro
