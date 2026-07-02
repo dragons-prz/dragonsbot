@@ -1,6 +1,6 @@
 import "dotenv/config";
 
-export type DatabaseProvider = "sqlite";
+export type DatabaseProvider = "sqlite" | "firestore";
 
 export interface AppEnv {
   discordClientId: string;
@@ -8,6 +8,7 @@ export interface AppEnv {
   discordGuildId?: string;
   databaseProvider: DatabaseProvider;
   sqlitePath: string;
+  firebaseServiceAccountPath?: string;
 }
 
 function required(name: string): string {
@@ -21,7 +22,7 @@ function required(name: string): string {
 
 export function loadEnv(): AppEnv {
   const provider = process.env.DATABASE_PROVIDER ?? "sqlite";
-  if (provider !== "sqlite") {
+  if (provider !== "sqlite" && provider !== "firestore") {
     throw new Error(`DATABASE_PROVIDER nao suportado: ${provider}`);
   }
 
@@ -30,6 +31,7 @@ export function loadEnv(): AppEnv {
     discordToken: required("DISCORD_TOKEN"),
     discordGuildId: process.env.DISCORD_GUILD_ID || undefined,
     databaseProvider: provider,
-    sqlitePath: process.env.SQLITE_PATH ?? "./data/dragons.sqlite"
+    sqlitePath: process.env.SQLITE_PATH ?? "./data/dragons.sqlite",
+    firebaseServiceAccountPath: process.env.FIREBASE_SERVICE_ACCOUNT_PATH || undefined
   };
 }

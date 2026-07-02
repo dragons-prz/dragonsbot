@@ -80,12 +80,14 @@ export const recrutarCommand: SlashCommand = {
     ),
 
   async execute(interaction, { store }) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
     const guildId = getGuildId(interaction);
     const recruiter = requireGuildMember(interaction);
     const config = await store.getGuildConfig(guildId);
 
     if (!memberHasRole(recruiter, config.recruiterRoleId)) {
-      await interaction.reply({ content: "Voce nao possui o cargo de recrutamento.", flags: MessageFlags.Ephemeral });
+      await interaction.editReply("Voce nao possui o cargo de recrutamento.");
       return;
     }
 
@@ -93,12 +95,12 @@ export const recrutarCommand: SlashCommand = {
 
     const recruitMember = await interaction.guild!.members.fetch(recruitUser.id).catch(() => null);
     if (!recruitMember) {
-      await interaction.reply({ content: "O usuario informado nao esta no servidor.", flags: MessageFlags.Ephemeral });
+      await interaction.editReply("O usuario informado nao esta no servidor.");
       return;
     }
 
     if (recruitMember.roles.cache.has(config.memberRoleId)) {
-      await interaction.reply({ content: "Este usuario ja possui o cargo de membro.", flags: MessageFlags.Ephemeral });
+      await interaction.editReply("Este usuario ja possui o cargo de membro.");
       return;
     }
 
@@ -107,10 +109,7 @@ export const recrutarCommand: SlashCommand = {
       if (!pending.approvalMessageId) {
         await store.deletePendingRecruitment(pending.id);
       } else {
-        await interaction.reply({
-          content: `Ja existe um recrutamento pendente para este usuario (#${pending.id}).`,
-          flags: MessageFlags.Ephemeral
-        });
+        await interaction.editReply(`Ja existe um recrutamento pendente para este usuario (#${pending.id}).`);
         return;
       }
     }
@@ -119,10 +118,7 @@ export const recrutarCommand: SlashCommand = {
       (member) => !member.user.bot && member.roles.cache.has(config.founderRoleId)
     );
     if (founders.size === 0) {
-      await interaction.reply({
-        content: "Nao encontrei nenhum Founder para receber a aprovacao por DM.",
-        flags: MessageFlags.Ephemeral
-      });
+      await interaction.editReply("Nao encontrei nenhum Founder para receber a aprovacao por DM.");
       return;
     }
 
@@ -159,23 +155,21 @@ export const recrutarCommand: SlashCommand = {
         }
       }
 
-      await interaction.reply({
-        content: [
+      await interaction.editReply(
+        [
           `Recrutamento #${recruitment.id} enviado por DM para ${sentMessages.length - failedCount} Founder(s).`,
           failedCount > 0 ? `${failedCount} Founder(s) nao puderam receber DM do bot.` : null
-        ].filter(Boolean).join("\n"),
-        flags: MessageFlags.Ephemeral
-      });
+        ].filter(Boolean).join("\n")
+      );
     } catch (error) {
       await store.deletePendingRecruitment(recruitment.id);
       console.error("Falha ao enviar DMs de aprovacao:", error);
-      await interaction.reply({
-        content: [
+      await interaction.editReply(
+        [
           "Nao consegui enviar a ficha por DM para nenhum Founder.",
           "Verifique se existe alguem com o cargo Founder e se a pessoa aceita mensagens diretas deste servidor."
-        ].join("\n"),
-        flags: MessageFlags.Ephemeral
-      });
+        ].join("\n")
+      );
       return;
     }
   }
@@ -192,26 +186,26 @@ export const approveRecruitmentButton: ButtonHandler = {
       return;
     }
 
+    await interaction.deferReply();
+
     const guild = await interaction.client.guilds.fetch(guildId).catch(() => null);
     if (!guild) {
-      await interaction.reply({ content: "Servidor do recrutamento nao encontrado." });
+      await interaction.editReply("Servidor do recrutamento nao encontrado.");
       return;
     }
 
     const founder = await guild.members.fetch(interaction.user.id).catch(() => null);
     if (!founder) {
-      await interaction.reply({ content: "Nao consegui validar seu usuario no servidor." });
+      await interaction.editReply("Nao consegui validar seu usuario no servidor.");
       return;
     }
 
     const config = await store.getGuildConfig(guildId);
 
     if (!memberHasRole(founder, config.founderRoleId)) {
-      await interaction.reply({ content: "Apenas Founders podem confirmar recrutamentos." });
+      await interaction.editReply("Apenas Founders podem confirmar recrutamentos.");
       return;
     }
-
-    await interaction.deferReply();
 
     const recruitment = await store.getRecruitment(recruitmentId);
     if (!recruitment || recruitment.guildId !== guildId) {
@@ -244,18 +238,17 @@ export const approveRecruitmentButton: ButtonHandler = {
 
     await (recruitMember as GuildMember).roles.add(memberRole, `Recrutamento aprovado por ${founder.user.tag}`);
 
-    const approved = await store.approveRecruitment(recruitment.id, founder.id);
-    if (!approved) {
+    const approval = await store.approveRecruitmentAndAddPoints(
+      recruitment.id,
+      founder.id,
+      RECRUITMENT_POINTS,
+      `Recrutamento #${recruitment.id} aprovado`
+    );
+    if (!approval) {
       await interaction.editReply("Este recrutamento ja foi aprovado.");
       return;
     }
-
-    const points = await store.addRecruiterPoints(
-      approved.guildId,
-      approved.recruiterUserId,
-      RECRUITMENT_POINTS,
-      `Recrutamento #${approved.id} aprovado`
-    );
+    const { recruitment: approved, recruiterPoints } = approval;
 
     const approvedMessage = buildApprovedMessage(
       approved.guildId,
@@ -263,7 +256,7 @@ export const approveRecruitmentButton: ButtonHandler = {
       approved.recruitUserId,
       approved.recruiterUserId,
       founder.id,
-      points.points
+      recruiterPoints.points
     );
     const approvalMessages = await store.getRecruitmentApprovalMessages(approved.id);
     await Promise.allSettled(

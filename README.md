@@ -32,11 +32,19 @@ Configure:
 DISCORD_CLIENT_ID=1487313181507588117
 DISCORD_TOKEN=seu_token
 DISCORD_GUILD_ID=id_do_servidor_para_testes
-DATABASE_PROVIDER=sqlite
+DATABASE_PROVIDER=firestore
 SQLITE_PATH=./data/dragons.sqlite
+FIREBASE_SERVICE_ACCOUNT_PATH=/caminho/seguro/service-account.json
 ```
 
 `DISCORD_GUILD_ID` e recomendado em desenvolvimento porque os comandos aparecem imediatamente no servidor informado. Sem ele, os comandos serao registrados globalmente e podem demorar alguns minutos.
+
+Para o Firebase, use o arquivo JSON da service account baixado no console do Firebase:
+
+```env
+DATABASE_PROVIDER=firestore
+FIREBASE_SERVICE_ACCOUNT_PATH=/caminho/seguro/service-account.json
+```
 
 ## Registrar comandos
 
@@ -131,14 +139,48 @@ Ao aprovar:
 
 ## Banco de dados
 
-Localmente, o bot usa SQLite em `./data/dragons.sqlite` por padrao. A implementacao fica atras da interface `DragonsStore`, permitindo criar futuramente um provider Firestore sem alterar os comandos.
+O bot suporta Firestore e SQLite pela interface `DragonsStore`.
 
-Tabelas criadas automaticamente:
+Para producao com Firebase:
 
-- `guild_configs`
+```env
+DATABASE_PROVIDER=firestore
+```
+
+Para testes locais com SQLite:
+
+```env
+DATABASE_PROVIDER=sqlite
+SQLITE_PATH=./data/dragons.sqlite
+```
+
+Colecoes usadas no Firestore:
+
+- `guildConfigs`
 - `recruitments`
-- `recruiter_points`
-- `recruiter_point_events`
+- `recruiterPoints`
+- `recruiterPointEvents`
+- `counters`
+- subcolecao `recruitments/{id}/approvalMessages`
+
+O provider SQLite continua disponivel para testes locais.
+
+## Migrar SQLite para Firestore
+
+Com as envs do Firebase preenchidas e `SQLITE_PATH` apontando para o arquivo local:
+
+```bash
+npm run migrate:sqlite-to-firestore
+```
+
+O script migra:
+
+- configuracoes dos servidores
+- recrutamentos
+- pontos dos recrutadores
+- historico de eventos de pontos
+- mensagens de aprovacao por DM
+- contador do proximo ID de recrutamento
 
 ## Validacao
 

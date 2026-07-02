@@ -8,6 +8,7 @@ import {
   DEFAULT_MEMBER_ROLE_ID,
   DEFAULT_RECRUITER_ROLE_ID,
   GuildConfig,
+  ApprovedRecruitmentResult,
   Recruitment,
   RecruitmentApprovalMessage,
   RecruiterPoints,
@@ -266,6 +267,61 @@ export class SqliteDragonsStore implements DragonsStore {
     }
 
     return this.getRecruitment(id);
+  }
+
+  async approveRecruitmentAndAddPoints(
+    id: number,
+    approvedByUserId: string,
+    points: number,
+    reason: string
+  ): Promise<ApprovedRecruitmentResult | null> {
+    const now = new Date().toISOString();
+    this.database.run("BEGIN TRANSACTION");
+    try {
+      this.database.run(
+        `UPDATE recruitments
+         SET status = 'approved', approved_by_user_id = ?, approved_at = ?
+         WHERE id = ? AND status = 'pending'`,
+        [approvedByUserId, now, id]
+      );
+
+      if (this.database.getRowsModified() === 0) {
+        this.database.run("ROLLBACK");
+        return null;
+      }
+
+      const recruitmentRow = this.getOne<RecruitmentRow>("SELECT * FROM recruitments WHERE id = ?", [id]);
+      if (!recruitmentRow) {
+        this.database.run("ROLLBACK");
+        throw new Error("Falha ao recuperar recrutamento aprovado.");
+      }
+
+      const recruitment = this.mapRecruitment(recruitmentRow);
+      this.database.run(
+        `INSERT INTO recruiter_points (guild_id, recruiter_user_id, points)
+         VALUES (?, ?, ?)
+         ON CONFLICT(guild_id, recruiter_user_id)
+         DO UPDATE SET points = points + excluded.points`,
+        [recruitment.guildId, recruitment.recruiterUserId, points]
+      );
+
+      this.database.run(
+        `INSERT INTO recruiter_point_events (guild_id, recruiter_user_id, points, reason, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        [recruitment.guildId, recruitment.recruiterUserId, points, reason, now]
+      );
+
+      this.database.run("COMMIT");
+      this.persist();
+
+      return {
+        recruitment,
+        recruiterPoints: await this.getRecruiterPoints(recruitment.guildId, recruitment.recruiterUserId)
+      };
+    } catch (error) {
+      this.database.run("ROLLBACK");
+      throw error;
+    }
   }
 
   async addRecruiterPoints(

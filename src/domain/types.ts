@@ -33,6 +33,11 @@ export interface RecruiterPoints {
   points: number;
 }
 
+export interface ApprovedRecruitmentResult {
+  recruitment: Recruitment;
+  recruiterPoints: RecruiterPoints;
+}
+
 export interface RecruiterStats {
   guildId: string;
   recruiterUserId: string;

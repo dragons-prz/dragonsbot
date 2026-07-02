@@ -41,10 +41,19 @@ export async function safeReply(
   content: string,
   ephemeral = true
 ): Promise<void> {
-  if (interaction.deferred || interaction.replied) {
-    await interaction.followUp({ content, flags: ephemeral ? MessageFlags.Ephemeral : undefined });
-    return;
-  }
+  try {
+    if (interaction.deferred || interaction.replied) {
+      await interaction.followUp({ content, flags: ephemeral ? MessageFlags.Ephemeral : undefined });
+      return;
+    }
 
-  await interaction.reply({ content, flags: ephemeral ? MessageFlags.Ephemeral : undefined });
+    await interaction.reply({ content, flags: ephemeral ? MessageFlags.Ephemeral : undefined });
+  } catch (error) {
+    if (typeof error === "object" && error && "code" in error && (error.code === 10062 || error.code === 40060)) {
+      console.warn("Nao foi possivel responder a interacao porque ela expirou ou ja foi respondida.");
+      return;
+    }
+
+    throw error;
+  }
 }

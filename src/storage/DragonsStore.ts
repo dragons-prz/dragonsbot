@@ -2,6 +2,7 @@ import {
   ChannelConfigKey,
   CreateRecruitmentInput,
   GuildConfig,
+  ApprovedRecruitmentResult,
   Recruitment,
   RecruitmentApprovalMessage,
   RecruiterPoints,
@@ -26,6 +27,7 @@ export interface DragonsStore {
   getRecruitmentApprovalMessages(recruitmentId: number): Promise<RecruitmentApprovalMessage[]>;
   deletePendingRecruitment(id: number): Promise<void>;
   approveRecruitment(id: number, approvedByUserId: string): Promise<Recruitment | null>;
+  approveRecruitmentAndAddPoints(id: number, approvedByUserId: string, points: number, reason: string): Promise<ApprovedRecruitmentResult | null>;
 
   addRecruiterPoints(guildId: string, recruiterUserId: string, points: number, reason: string): Promise<RecruiterPoints>;
   getRecruiterPoints(guildId: string, recruiterUserId: string): Promise<RecruiterPoints>;
