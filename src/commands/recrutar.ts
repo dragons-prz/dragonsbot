@@ -74,6 +74,21 @@ function buildApprovalMessage(guildId: string, recruitmentId: number, recruitId:
   return { embeds: [embed], components: [row] };
 }
 
+function buildRecruitmentAnnouncement(recruitId: string, recruiterId: string, recruitmentId: number) {
+  const embed = new EmbedBuilder()
+    .setTitle("Novo membro recrutado")
+    .setColor(0x2f9e44)
+    .setDescription(`<@${recruitId}> foi recrutado por <@${recruiterId}>.`)
+    .addFields(
+      { name: "Membro", value: `<@${recruitId}>`, inline: true },
+      { name: "Recrutador", value: `<@${recruiterId}>`, inline: true },
+      { name: "Recrutamento", value: `#${recruitmentId}`, inline: true }
+    )
+    .setTimestamp();
+
+  return { embeds: [embed] };
+}
+
 export const recrutarCommand: SlashCommand = {
   data: new SlashCommandBuilder()
     .setName("recrutar")
@@ -224,8 +239,8 @@ export const recrutarCommand: SlashCommand = {
 
       await interaction.editReply(
         [
-          `Recrutamento #${recruitment.id} enviado por DM para ${sentCount} Founder(s).`,
-          failedCount > 0 ? `${failedCount} Founder(s) nao puderam receber DM do bot.` : null
+          `Recrutamento #${recruitment.id} criado e pendente de aprovacao.`,
+          "Os Founders foram notificados por DM."
         ].filter(Boolean).join("\n")
       );
       logger.info("recruitment.approval_dm_sent", {
@@ -537,6 +552,33 @@ export const approveRecruitmentButton: ButtonHandler = {
       updatedMessages,
       failedMessageUpdates
     });
+
+    const announcementChannel = await guild.channels.fetch(config.recruitmentAnnouncementChannelId).catch(() => null);
+    if (announcementChannel?.isTextBased() && "send" in announcementChannel) {
+      await announcementChannel.send(
+        buildRecruitmentAnnouncement(approved.recruitUserId, approved.recruiterUserId, approved.id)
+      ).then(() => {
+        logger.info("recruitment.announcement_sent", {
+          guildId,
+          recruitmentId: approved.id,
+          channelId: config.recruitmentAnnouncementChannelId,
+          recruitUserId: approved.recruitUserId,
+          recruiterUserId: approved.recruiterUserId
+        });
+      }).catch((error) => {
+        logger.error("recruitment.announcement_failed", error, {
+          guildId,
+          recruitmentId: approved.id,
+          channelId: config.recruitmentAnnouncementChannelId
+        });
+      });
+    } else {
+      logger.warn("recruitment.announcement_channel_not_found", {
+        guildId,
+        recruitmentId: approved.id,
+        channelId: config.recruitmentAnnouncementChannelId
+      });
+    }
 
     await interaction.editReply(`Recrutamento aprovado. <@${approved.recruiterUserId}> recebeu ${RECRUITMENT_POINTS} pontos.`);
   }

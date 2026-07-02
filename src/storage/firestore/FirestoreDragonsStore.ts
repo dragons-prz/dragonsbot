@@ -11,6 +11,7 @@ import {
   DEFAULT_FOUNDER_ROLE_ID,
   DEFAULT_MEMBER_ROLE_ID,
   DEFAULT_RECRUITER_ROLE_ID,
+  DEFAULT_RECRUITMENT_ANNOUNCEMENT_CHANNEL_ID,
   GuildConfig,
   HierarchyRole,
   MemberProfile,
@@ -27,6 +28,7 @@ interface GuildConfigDocument {
   founderRoleId: string;
   memberRoleId: string;
   approvalChannelId: string | null;
+  recruitmentAnnouncementChannelId?: string;
   hierarchySeeded?: boolean;
 }
 
@@ -98,6 +100,11 @@ export class FirestoreDragonsStore implements DragonsStore {
     }
 
     const data = snapshot.data() as GuildConfigDocument;
+    if (!data.recruitmentAnnouncementChannelId) {
+      data.recruitmentAnnouncementChannelId = DEFAULT_RECRUITMENT_ANNOUNCEMENT_CHANNEL_ID;
+      await ref.update({ recruitmentAnnouncementChannelId: data.recruitmentAnnouncementChannelId });
+    }
+
     if (!data.hierarchySeeded) {
       await this.seedDefaultHierarchyRoles(guildId);
       await ref.update({ hierarchySeeded: true });
@@ -120,12 +127,13 @@ export class FirestoreDragonsStore implements DragonsStore {
   }
 
   async setChannelConfig(guildId: string, key: ChannelConfigKey, channelId: string): Promise<GuildConfig> {
-    if (key !== "approval") {
+    if (key !== "approval" && key !== "recruitment") {
       throw new Error(`Canal de configuracao nao suportado: ${key}`);
     }
 
     await this.ensureGuildConfig(guildId);
-    await this.guildConfigRef(guildId).update({ approvalChannelId: channelId });
+    const field = key === "approval" ? "approvalChannelId" : "recruitmentAnnouncementChannelId";
+    await this.guildConfigRef(guildId).update({ [field]: channelId });
     return this.getGuildConfig(guildId);
   }
 
@@ -463,6 +471,7 @@ export class FirestoreDragonsStore implements DragonsStore {
       founderRoleId: DEFAULT_FOUNDER_ROLE_ID,
       memberRoleId: DEFAULT_MEMBER_ROLE_ID,
       approvalChannelId: null,
+      recruitmentAnnouncementChannelId: DEFAULT_RECRUITMENT_ANNOUNCEMENT_CHANNEL_ID,
       hierarchySeeded: false
     };
   }
@@ -474,6 +483,7 @@ export class FirestoreDragonsStore implements DragonsStore {
       founderRoleId: data.founderRoleId,
       memberRoleId: data.memberRoleId,
       approvalChannelId: data.approvalChannelId ?? null,
+      recruitmentAnnouncementChannelId: data.recruitmentAnnouncementChannelId ?? DEFAULT_RECRUITMENT_ANNOUNCEMENT_CHANNEL_ID,
       hierarchySeeded: data.hierarchySeeded ?? false
     };
   }

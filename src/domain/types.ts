@@ -1,6 +1,7 @@
 export const DEFAULT_RECRUITER_ROLE_ID = "1520118976087199754";
 export const DEFAULT_FOUNDER_ROLE_ID = "1487882833761407007";
 export const DEFAULT_MEMBER_ROLE_ID = "1488092923588247563";
+export const DEFAULT_RECRUITMENT_ANNOUNCEMENT_CHANNEL_ID = "1522080152094249140";
 export const RECRUITMENT_POINTS = 8;
 
 export interface HierarchyRole {
@@ -36,7 +37,7 @@ export const DEFAULT_HIERARCHY_ROLES: HierarchyRole[] = [
 ];
 
 export type RoleConfigKey = "recruiter" | "founder" | "member";
-export type ChannelConfigKey = "approval";
+export type ChannelConfigKey = "approval" | "recruitment";
 export type RecruitmentStatus = "pending" | "approved";
 
 export interface GuildConfig {
@@ -45,6 +46,7 @@ export interface GuildConfig {
   founderRoleId: string;
   memberRoleId: string;
   approvalChannelId: string | null;
+  recruitmentAnnouncementChannelId: string;
   hierarchySeeded: boolean;
 }
 

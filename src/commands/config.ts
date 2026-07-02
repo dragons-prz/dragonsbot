@@ -42,7 +42,10 @@ export const configCommand: SlashCommand = {
             .setName("tipo")
             .setDescription("Tipo do canal.")
             .setRequired(true)
-            .addChoices({ name: "Approval", value: "approval" })
+            .addChoices(
+              { name: "Approval", value: "approval" },
+              { name: "Recruitment", value: "recruitment" }
+            )
         )
         .addChannelOption((option) =>
           option
@@ -118,7 +121,8 @@ export const configCommand: SlashCommand = {
         `Cargo recruiter: <@&${config.recruiterRoleId}> (\`${config.recruiterRoleId}\`)`,
         `Cargo founder: <@&${config.founderRoleId}> (\`${config.founderRoleId}\`)`,
         `Cargo member: <@&${config.memberRoleId}> (\`${config.memberRoleId}\`)`,
-        `Canal approval: ${config.approvalChannelId ? `<#${config.approvalChannelId}> (\`${config.approvalChannelId}\`)` : "nao configurado"}`
+        `Canal approval: ${config.approvalChannelId ? `<#${config.approvalChannelId}> (\`${config.approvalChannelId}\`)` : "nao configurado"}`,
+        `Canal recruitment: <#${config.recruitmentAnnouncementChannelId}> (\`${config.recruitmentAnnouncementChannelId}\`)`
       ].join("\n"),
       flags: MessageFlags.Ephemeral
     });

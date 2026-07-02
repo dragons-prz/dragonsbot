@@ -82,13 +82,20 @@ Valores iniciais usados quando o servidor ainda nao tem configuracao salva:
 
 ### `/config set-channel tipo:approval channel:<canal>`
 
-Configura um canal de aprovacao legado. Apenas administradores podem usar.
+Configura um canal usado pelo bot. Apenas administradores podem usar.
 
 ```text
 /config set-channel tipo:approval channel:#canal-de-aprovacoes
+/config set-channel tipo:recruitment channel:#recrutamentos
 ```
 
 O fluxo atual envia a aprovacao por DM para todos os membros com cargo `founder`, entao este canal nao e obrigatorio para recrutar.
+
+O canal `recruitment` recebe o anuncio quando um recrutamento for aprovado. Se nao for configurado manualmente, o default e:
+
+```text
+1522080152094249140
+```
 
 ### `/config show`
 
@@ -131,6 +138,7 @@ Ao aprovar:
 - o recrutamento muda para `approved`
 - o usuario recrutado recebe o cargo `member`
 - o recrutador recebe 8 pontos
+- o canal de recrutamento recebe um anuncio informando quem foi recrutado e por quem
 - os pontos entram no perfil generico de membro
 - se o recrutador atingir a pontuacao de um novo rank, o cargo de hierarquia e atualizado automaticamente
 - quando houver promocao, o recrutador recebe uma DM informando o novo cargo
