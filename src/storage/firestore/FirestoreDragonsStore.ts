@@ -1,5 +1,5 @@
 import { cert, getApps, initializeApp, ServiceAccount } from "firebase-admin/app";
-import { FieldValue, Firestore, getFirestore, Timestamp } from "firebase-admin/firestore";
+import { Firestore, getFirestore, Timestamp } from "firebase-admin/firestore";
 import { readFileSync } from "node:fs";
 import { AppEnv } from "../../config/env";
 import {
@@ -9,12 +9,12 @@ import {
   DEFAULT_FOUNDER_ROLE_ID,
   DEFAULT_MEMBER_ROLE_ID,
   DEFAULT_RECRUITER_ROLE_ID,
+  HIERARCHY_ROLES,
   GuildConfig,
+  MemberProfile,
+  MemberRankingEntry,
   Recruitment,
   RecruitmentApprovalMessage,
-  RecruiterPoints,
-  RecruiterRankingEntry,
-  RecruiterStats,
   RoleConfigKey
 } from "../../domain/types";
 import { DragonsStore } from "../DragonsStore";
@@ -38,10 +38,14 @@ interface RecruitmentDocument {
   approvedAt: string | null;
 }
 
-interface RecruiterPointsDocument {
+interface MemberDocument {
   guildId: string;
-  recruiterUserId: string;
+  userId: string;
   points: number;
+  recruitments: number;
+  rankName: string;
+  rankRoleId: string;
+  updatedAt: string;
 }
 
 interface ApprovalMessageDocument {
@@ -223,7 +227,7 @@ export class FirestoreDragonsStore implements DragonsStore {
     });
   }
 
-  async approveRecruitmentAndAddPoints(
+  async approveRecruitmentAndAddMemberPoints(
     id: number,
     approvedByUserId: string,
     points: number,
@@ -248,117 +252,134 @@ export class FirestoreDragonsStore implements DragonsStore {
         approvedByUserId,
         approvedAt: now
       };
-      const pointsRef = this.recruiterPointsRef(updatedRecruitment.guildId, updatedRecruitment.recruiterUserId);
-      const pointsSnapshot = await transaction.get(pointsRef);
-      const currentPoints = (pointsSnapshot.data()?.points as number | undefined) ?? 0;
-      const nextPoints = currentPoints + points;
+      const memberRef = this.memberRef(updatedRecruitment.guildId, updatedRecruitment.recruiterUserId);
+      const memberSnapshot = await transaction.get(memberRef);
+      const currentMember = this.mapMemberFromSnapshot(
+        updatedRecruitment.guildId,
+        updatedRecruitment.recruiterUserId,
+        memberSnapshot.data() as MemberDocument | undefined
+      );
+      const previousRankName = currentMember.rankName;
+      const previousRankRoleId = currentMember.rankRoleId;
+      const nextPoints = currentMember.points + points;
+      const nextRecruitments = currentMember.recruitments + 1;
+      const nextRank = this.getRankForPoints(nextPoints);
+      const updatedMember: MemberProfile = {
+        guildId: updatedRecruitment.guildId,
+        userId: updatedRecruitment.recruiterUserId,
+        points: nextPoints,
+        recruitments: nextRecruitments,
+        rankName: nextRank.name,
+        rankRoleId: nextRank.roleId,
+        updatedAt: now
+      };
 
       transaction.update(recruitmentRef, {
         status: "approved",
         approvedByUserId,
         approvedAt: now
       });
-      transaction.set(pointsRef, {
+      transaction.set(memberRef, updatedMember);
+      transaction.create(this.memberPointEventRef(), {
         guildId: updatedRecruitment.guildId,
-        recruiterUserId: updatedRecruitment.recruiterUserId,
-        points: nextPoints
-      });
-      transaction.create(this.pointEventRef(), {
-        guildId: updatedRecruitment.guildId,
-        recruiterUserId: updatedRecruitment.recruiterUserId,
+        userId: updatedRecruitment.recruiterUserId,
         points,
         reason,
+        source: "recruitment",
+        recruitmentId: id,
         createdAt: now,
         createdAtTimestamp: Timestamp.now()
       });
 
       return {
         recruitment: this.mapRecruitment(updatedRecruitment),
-        recruiterPoints: {
-          guildId: updatedRecruitment.guildId,
-          recruiterUserId: updatedRecruitment.recruiterUserId,
-          points: nextPoints
-        }
+        member: updatedMember,
+        previousRankName,
+        previousRankRoleId,
+        rankChanged: previousRankRoleId !== updatedMember.rankRoleId
       };
     });
   }
 
-  async addRecruiterPoints(
+  async addMemberPoints(
     guildId: string,
-    recruiterUserId: string,
+    userId: string,
     points: number,
     reason: string
-  ): Promise<RecruiterPoints> {
+  ): Promise<MemberProfile> {
     const now = new Date().toISOString();
     return this.db.runTransaction(async (transaction) => {
-      const pointsRef = this.recruiterPointsRef(guildId, recruiterUserId);
-      const snapshot = await transaction.get(pointsRef);
-      const nextPoints = ((snapshot.data()?.points as number | undefined) ?? 0) + points;
-
-      transaction.set(pointsRef, { guildId, recruiterUserId, points: nextPoints });
-      transaction.create(this.pointEventRef(), {
+      const memberRef = this.memberRef(guildId, userId);
+      const snapshot = await transaction.get(memberRef);
+      const currentMember = this.mapMemberFromSnapshot(guildId, userId, snapshot.data() as MemberDocument | undefined);
+      const nextPoints = currentMember.points + points;
+      const nextRank = this.getRankForPoints(nextPoints);
+      const updatedMember: MemberProfile = {
         guildId,
-        recruiterUserId,
+        userId,
+        points: nextPoints,
+        recruitments: currentMember.recruitments,
+        rankName: nextRank.name,
+        rankRoleId: nextRank.roleId,
+        updatedAt: now
+      };
+
+      transaction.set(memberRef, updatedMember);
+      transaction.create(this.memberPointEventRef(), {
+        guildId,
+        userId,
         points,
         reason,
         createdAt: now,
         createdAtTimestamp: Timestamp.now()
       });
 
-      return { guildId, recruiterUserId, points: nextPoints };
+      return updatedMember;
     });
   }
 
-  async getRecruiterPoints(guildId: string, recruiterUserId: string): Promise<RecruiterPoints> {
-    const snapshot = await this.recruiterPointsRef(guildId, recruiterUserId).get();
-    return {
+  async ensureMemberProfile(guildId: string, userId: string): Promise<MemberProfile> {
+    const now = new Date().toISOString();
+    const ref = this.memberRef(guildId, userId);
+    const snapshot = await ref.get();
+    if (snapshot.exists) {
+      return this.mapMemberFromSnapshot(guildId, userId, snapshot.data() as MemberDocument);
+    }
+
+    const baseRank = this.getRankForPoints(0);
+    const profile: MemberProfile = {
       guildId,
-      recruiterUserId,
-      points: (snapshot.data()?.points as number | undefined) ?? 0
+      userId,
+      points: 0,
+      recruitments: 0,
+      rankName: baseRank.name,
+      rankRoleId: baseRank.roleId,
+      updatedAt: now
     };
+    await ref.set(profile);
+    return profile;
   }
 
-  async getRecruiterStats(guildId: string, recruiterUserId: string): Promise<RecruiterStats> {
-    const [points, recruitments] = await Promise.all([
-      this.getRecruiterPoints(guildId, recruiterUserId),
-      this.db
-        .collection("recruitments")
-        .where("guildId", "==", guildId)
-        .where("recruiterUserId", "==", recruiterUserId)
-        .where("status", "==", "approved")
-        .get()
-    ]);
-
-    return {
-      guildId,
-      recruiterUserId,
-      points: points.points,
-      approvedRecruitments: recruitments.size
-    };
+  async getMemberProfile(guildId: string, userId: string): Promise<MemberProfile> {
+    const snapshot = await this.memberRef(guildId, userId).get();
+    return this.mapMemberFromSnapshot(guildId, userId, snapshot.data() as MemberDocument | undefined);
   }
 
-  async getRecruiterRanking(guildId: string, limit: number): Promise<RecruiterRankingEntry[]> {
+  async getMemberRanking(guildId: string, limit: number): Promise<MemberRankingEntry[]> {
     const safeLimit = Math.max(1, Math.min(limit, 25));
     const snapshot = await this.db
-      .collection("recruiterPoints")
+      .collection("members")
       .where("guildId", "==", guildId)
       .get();
 
-    const entries = await Promise.all(
-      snapshot.docs.map(async (doc, index) => {
-        const data = doc.data() as RecruiterPointsDocument;
-        const stats = await this.getRecruiterStats(guildId, data.recruiterUserId);
-        return {
-          position: index + 1,
-          guildId,
-          recruiterUserId: data.recruiterUserId,
-          points: data.points,
-          approvedRecruitments: stats.approvedRecruitments
-        };
-      })
-    );
-
-    return entries.sort((a, b) => b.points - a.points || b.approvedRecruitments - a.approvedRecruitments || a.recruiterUserId.localeCompare(b.recruiterUserId))
+    return snapshot.docs
+      .map((doc, index) => ({
+        position: index + 1,
+        ...this.mapMemberFromSnapshot(guildId, doc.id.split("_").slice(1).join("_"), doc.data() as MemberDocument)
+      }))
+      .filter((entry) => entry.points > 0)
+      .sort((a, b) => b.points - a.points || b.recruitments - a.recruitments || a.userId.localeCompare(b.userId))
+      .slice(0, safeLimit)
       .map((entry, index) => ({ ...entry, position: index + 1 }));
   }
 
@@ -411,6 +432,24 @@ export class FirestoreDragonsStore implements DragonsStore {
     };
   }
 
+  private mapMemberFromSnapshot(guildId: string, userId: string, data?: Partial<MemberDocument>): MemberProfile {
+    const points = data?.points ?? 0;
+    const rank = this.getRankForPoints(points);
+    return {
+      guildId,
+      userId,
+      points,
+      recruitments: data?.recruitments ?? 0,
+      rankName: data?.rankName ?? rank.name,
+      rankRoleId: data?.rankRoleId ?? rank.roleId,
+      updatedAt: data?.updatedAt ?? new Date(0).toISOString()
+    };
+  }
+
+  private getRankForPoints(points: number) {
+    return [...HIERARCHY_ROLES].reverse().find((rank) => points >= rank.points) ?? HIERARCHY_ROLES[0];
+  }
+
   private guildConfigRef(guildId: string) {
     return this.db.collection("guildConfigs").doc(guildId);
   }
@@ -423,12 +462,12 @@ export class FirestoreDragonsStore implements DragonsStore {
     return this.recruitmentRef(recruitmentId).collection("approvalMessages").doc(founderUserId);
   }
 
-  private recruiterPointsRef(guildId: string, recruiterUserId: string) {
-    return this.db.collection("recruiterPoints").doc(`${guildId}_${recruiterUserId}`);
+  private memberRef(guildId: string, userId: string) {
+    return this.db.collection("members").doc(`${guildId}_${userId}`);
   }
 
-  private pointEventRef() {
-    return this.db.collection("recruiterPointEvents").doc();
+  private memberPointEventRef() {
+    return this.db.collection("memberPointEvents").doc();
   }
 
   private counterRef(name: string) {

@@ -7,7 +7,7 @@ import {
   MessageFlags,
   SlashCommandBuilder
 } from "discord.js";
-import { RECRUITMENT_POINTS } from "../domain/types";
+import { HIERARCHY_ROLES, RECRUITMENT_POINTS } from "../domain/types";
 import {
   getGuildId,
   memberHasRole,
@@ -24,7 +24,8 @@ function buildApprovedMessage(
   recruitId: string,
   recruiterId: string,
   founderId: string,
-  recruiterPoints: number
+  memberPoints: number,
+  rankName: string
 ) {
   const disabledRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
@@ -42,7 +43,8 @@ function buildApprovedMessage(
       { name: "ID copiavel", value: `\`${recruitId}\``, inline: true },
       { name: "Recrutador", value: `<@${recruiterId}>`, inline: true },
       { name: "Aprovado por", value: `<@${founderId}>`, inline: true },
-      { name: "Pontos do recrutador", value: String(recruiterPoints), inline: true }
+      { name: "Pontos do membro", value: String(memberPoints), inline: true },
+      { name: "Rank atual", value: rankName, inline: true }
     )
     .setTimestamp();
 
@@ -386,8 +388,23 @@ export const approveRecruitmentButton: ButtonHandler = {
     }
 
     await (recruitMember as GuildMember).roles.add(memberRole, `Recrutamento aprovado por ${founder.user.tag}`);
+    const recruitedProfile = await store.ensureMemberProfile(guildId, recruitMember.id);
+    const baseRank = HIERARCHY_ROLES[0];
+    const baseRankRole = await guild.roles.fetch(baseRank.roleId).catch(() => null);
+    if (baseRankRole && !recruitMember.roles.cache.has(baseRankRole.id)) {
+      await recruitMember.roles.add(baseRankRole, `Rank inicial ${baseRank.name}`).catch((error) => {
+        logger.error("hierarchy.base_rank_add_failed", error, {
+          guildId,
+          recruitmentId,
+          userId: recruitMember.id,
+          userTag: recruitMember.user.tag,
+          rankName: recruitedProfile.rankName,
+          rankRoleId: recruitedProfile.rankRoleId
+        });
+      });
+    }
 
-    const approval = await store.approveRecruitmentAndAddPoints(
+    const approval = await store.approveRecruitmentAndAddMemberPoints(
       recruitment.id,
       founder.id,
       RECRUITMENT_POINTS,
@@ -404,7 +421,80 @@ export const approveRecruitmentButton: ButtonHandler = {
       await interaction.editReply("Este recrutamento ja foi aprovado.");
       return;
     }
-    const { recruitment: approved, recruiterPoints } = approval;
+    const { recruitment: approved, member: promotedMember } = approval;
+
+    const currentRankRole = await guild.roles.fetch(promotedMember.rankRoleId).catch(() => null);
+    if (!recruiterMember) {
+      logger.warn("hierarchy.member_not_found", {
+        guildId,
+        recruitmentId,
+        userId: promotedMember.userId,
+        rankName: promotedMember.rankName,
+        rankRoleId: promotedMember.rankRoleId
+      });
+    } else {
+      if (approval.rankChanged) {
+        const oldRank = await guild.roles.fetch(approval.previousRankRoleId).catch(() => null);
+        if (oldRank && recruiterMember.roles.cache.has(oldRank.id)) {
+          await recruiterMember.roles.remove(oldRank, `Promocao automatica para ${promotedMember.rankName}`).catch((error) => {
+            logger.error("hierarchy.old_rank_remove_failed", error, {
+              guildId,
+              recruitmentId,
+              userId: recruiterMember.id,
+              userTag: recruiterMember.user.tag,
+              oldRankRoleId: oldRank.id
+            });
+          });
+        }
+      }
+
+      if (currentRankRole && !recruiterMember.roles.cache.has(currentRankRole.id)) {
+        await recruiterMember.roles.add(currentRankRole, `Sincronizacao automatica de rank ${promotedMember.rankName}`).catch((error) => {
+          logger.error("hierarchy.rank_role_add_failed", error, {
+            guildId,
+            recruitmentId,
+            userId: recruiterMember.id,
+            userTag: recruiterMember.user.tag,
+            rankName: promotedMember.rankName,
+            rankRoleId: promotedMember.rankRoleId
+          });
+        });
+      }
+
+      if (approval.rankChanged) {
+        await recruiterMember.send(`Parabens! Voce upou para o cargo **${promotedMember.rankName}**.`).catch((error) => {
+          logger.error("hierarchy.rank_up_dm_failed", error, {
+            guildId,
+            recruitmentId,
+            userId: recruiterMember.id,
+            userTag: recruiterMember.user.tag,
+            rankName: promotedMember.rankName,
+            rankRoleId: promotedMember.rankRoleId
+          });
+        });
+        logger.info("hierarchy.rank_up", {
+          guildId,
+          recruitmentId,
+          userId: recruiterMember.id,
+          userTag: recruiterMember.user.tag,
+          previousRankName: approval.previousRankName,
+          previousRankRoleId: approval.previousRankRoleId,
+          rankName: promotedMember.rankName,
+          rankRoleId: promotedMember.rankRoleId,
+          points: promotedMember.points
+        });
+      }
+
+      if (!currentRankRole) {
+        logger.warn("hierarchy.rank_role_not_found", {
+          guildId,
+          recruitmentId,
+          userId: promotedMember.userId,
+          rankName: promotedMember.rankName,
+          rankRoleId: promotedMember.rankRoleId
+        });
+      }
+    }
 
     const approvedMessage = buildApprovedMessage(
       approved.guildId,
@@ -412,7 +502,8 @@ export const approveRecruitmentButton: ButtonHandler = {
       approved.recruitUserId,
       approved.recruiterUserId,
       founder.id,
-      recruiterPoints.points
+      promotedMember.points,
+      promotedMember.rankName
     );
     const approvalMessages = await store.getRecruitmentApprovalMessages(approved.id);
     const updateResults = await Promise.allSettled(
@@ -439,7 +530,10 @@ export const approveRecruitmentButton: ButtonHandler = {
       recruitUserId: approved.recruitUserId,
       recruitUserTag: recruitMember.user.tag,
       pointsAdded: RECRUITMENT_POINTS,
-      recruiterTotalPoints: recruiterPoints.points,
+      memberTotalPoints: promotedMember.points,
+      memberRecruitments: promotedMember.recruitments,
+      memberRankName: promotedMember.rankName,
+      rankChanged: approval.rankChanged,
       approvalMessages: approvalMessages.length,
       updatedMessages,
       failedMessageUpdates

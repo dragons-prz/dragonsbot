@@ -6,24 +6,26 @@ import { SlashCommand } from "./types";
 export const pontosCommand: SlashCommand = {
   data: new SlashCommandBuilder()
     .setName("pontos")
-    .setDescription("Mostra sua pontuacao de recrutamento."),
+    .setDescription("Mostra sua pontuacao, recrutamentos e rank atual."),
 
   async execute(interaction, { store }) {
     const guildId = getGuildId(interaction);
     const member = requireGuildMember(interaction);
-    const stats = await store.getRecruiterStats(guildId, member.id);
+    const profile = await store.getMemberProfile(guildId, member.id);
     logger.info("points.viewed", {
       guildId,
       userId: member.id,
       userTag: member.user.tag,
-      points: stats.points,
-      approvedRecruitments: stats.approvedRecruitments
+      points: profile.points,
+      recruitments: profile.recruitments,
+      rankName: profile.rankName
     });
 
     await interaction.reply({
       content: [
-        `Voce tem **${stats.points}** ponto${stats.points === 1 ? "" : "s"} de recrutamento.`,
-        `Recrutamentos aprovados: **${stats.approvedRecruitments}**.`
+        `Voce tem **${profile.points}** ponto${profile.points === 1 ? "" : "s"}.`,
+        `Recrutamentos aprovados: **${profile.recruitments}**.`,
+        `Rank atual: **${profile.rankName}**.`
       ].join("\n"),
       flags: MessageFlags.Ephemeral
     });

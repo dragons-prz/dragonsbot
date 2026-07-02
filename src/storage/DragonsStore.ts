@@ -3,11 +3,10 @@ import {
   CreateRecruitmentInput,
   GuildConfig,
   ApprovedRecruitmentResult,
+  MemberProfile,
+  MemberRankingEntry,
   Recruitment,
   RecruitmentApprovalMessage,
-  RecruiterPoints,
-  RecruiterRankingEntry,
-  RecruiterStats,
   RoleConfigKey
 } from "../domain/types";
 
@@ -27,10 +26,10 @@ export interface DragonsStore {
   getRecruitmentApprovalMessages(recruitmentId: number): Promise<RecruitmentApprovalMessage[]>;
   deletePendingRecruitment(id: number): Promise<void>;
   approveRecruitment(id: number, approvedByUserId: string): Promise<Recruitment | null>;
-  approveRecruitmentAndAddPoints(id: number, approvedByUserId: string, points: number, reason: string): Promise<ApprovedRecruitmentResult | null>;
+  approveRecruitmentAndAddMemberPoints(id: number, approvedByUserId: string, points: number, reason: string): Promise<ApprovedRecruitmentResult | null>;
 
-  addRecruiterPoints(guildId: string, recruiterUserId: string, points: number, reason: string): Promise<RecruiterPoints>;
-  getRecruiterPoints(guildId: string, recruiterUserId: string): Promise<RecruiterPoints>;
-  getRecruiterStats(guildId: string, recruiterUserId: string): Promise<RecruiterStats>;
-  getRecruiterRanking(guildId: string, limit: number): Promise<RecruiterRankingEntry[]>;
+  addMemberPoints(guildId: string, userId: string, points: number, reason: string): Promise<MemberProfile>;
+  ensureMemberProfile(guildId: string, userId: string): Promise<MemberProfile>;
+  getMemberProfile(guildId: string, userId: string): Promise<MemberProfile>;
+  getMemberRanking(guildId: string, limit: number): Promise<MemberRankingEntry[]>;
 }

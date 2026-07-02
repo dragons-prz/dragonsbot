@@ -120,7 +120,7 @@ Mostra sua pontuacao atual e a quantidade de recrutamentos aprovados feitos por 
 
 ### `/ranking limite:<numero>`
 
-Mostra o ranking de recrutamento do servidor, ordenado por pontos e depois por recrutamentos aprovados. O limite e opcional, com padrao 10 e maximo 25.
+Mostra o ranking de membros do servidor, ordenado por pontos e depois por recrutamentos aprovados. O limite e opcional, com padrao 10 e maximo 25.
 
 ## Aprovacao
 
@@ -131,8 +131,41 @@ Ao aprovar:
 - o recrutamento muda para `approved`
 - o usuario recrutado recebe o cargo `member`
 - o recrutador recebe 8 pontos
+- os pontos entram no perfil generico de membro
+- se o recrutador atingir a pontuacao de um novo rank, o cargo de hierarquia e atualizado automaticamente
+- quando houver promocao, o recrutador recebe uma DM informando o novo cargo
 - as DMs enviadas aos Founders sao atualizadas para mostrar a aprovacao
 - o botao e desativado para evitar pontos duplicados
+
+## Hierarquia
+
+A pontuacao fica na entidade generica de membro, nao em uma entidade exclusiva de recrutador. Hoje recrutamento soma pontos nessa entidade, e futuras areas tambem poderao somar pontos no mesmo perfil.
+
+Ranks configurados:
+
+| Cargo | ID do Cargo | Pontos | Recrutamentos |
+| --- | --- | ---: | ---: |
+| Delusions | `1487888136598982838` | 0 | 0 |
+| Hope | `1488087958249799850` | 24 | 3 |
+| Lotus | `1488086603980214433` | 56 | 7 |
+| Swag | `1488087908480057354` | 96 | 12 |
+| Revenge | `1488086779532939284` | 144 | 18 |
+| Mystic | `1488086653359882271` | 200 | 25 |
+| Darkness | `1488086711278764213` | 264 | 33 |
+| Death | `1487888101245325552` | 336 | 42 |
+| Nightmare | `1487888057901518849` | 416 | 52 |
+| Critic | `1487887943103283240` | 504 | 63 |
+| Prince Of Chaos | `1487888006345003058` | 600 | 75 |
+| Legend | `1488088043133865994` | 704 | 88 |
+| Supreme | `1488088157625909269` | 816 | 102 |
+| Insanity | `1488088110599503903` | 936 | 117 |
+| Royal | `1487887769182142514` | 1064 | 133 |
+| Imperial | `1487887706015928455` | 1200 | 150 |
+| Destiny | `1487884344872927365` | 1360 | 170 |
+| Eternal | `1488088203436097566` | 1536 | 192 |
+| Immortal | `1487887891676926032` | 1728 | 216 |
+| Angelical | `1487887828523417611` | 1920 | 240 |
+| God | `1488086504202043502` | 2160 | 270 |
 
 ## Banco de dados
 
@@ -142,10 +175,16 @@ Colecoes usadas no Firestore:
 
 - `guildConfigs`
 - `recruitments`
-- `recruiterPoints`
-- `recruiterPointEvents`
+- `members`
+- `memberPointEvents`
 - `counters`
 - subcolecao `recruitments/{id}/approvalMessages`
+
+Se ja houver dados antigos em `recruiterPoints`/`recruiterPointEvents`, migre para a estrutura generica:
+
+```bash
+npm run migrate:firestore-members
+```
 
 ## Logs
 

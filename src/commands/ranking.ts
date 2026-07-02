@@ -6,11 +6,11 @@ import { SlashCommand } from "./types";
 export const rankingCommand: SlashCommand = {
   data: new SlashCommandBuilder()
     .setName("ranking")
-    .setDescription("Mostra o ranking de recrutamento.")
+    .setDescription("Mostra o ranking de membros por pontos.")
     .addIntegerOption((option) =>
       option
         .setName("limite")
-        .setDescription("Quantidade de recrutadores no ranking.")
+        .setDescription("Quantidade de membros no ranking.")
         .setMinValue(1)
         .setMaxValue(25)
         .setRequired(false)
@@ -19,7 +19,7 @@ export const rankingCommand: SlashCommand = {
   async execute(interaction, { store }) {
     const guildId = getGuildId(interaction);
     const limit = interaction.options.getInteger("limite") ?? 10;
-    const ranking = await store.getRecruiterRanking(guildId, limit);
+    const ranking = await store.getMemberRanking(guildId, limit);
     logger.info("ranking.viewed", {
       guildId,
       userId: interaction.user.id,
@@ -30,7 +30,7 @@ export const rankingCommand: SlashCommand = {
 
     if (ranking.length === 0) {
       await interaction.reply({
-        content: "Ainda nao ha recrutadores com pontos no ranking.",
+        content: "Ainda nao ha membros com pontos no ranking.",
         flags: MessageFlags.Ephemeral
       });
       return;
@@ -38,12 +38,12 @@ export const rankingCommand: SlashCommand = {
 
     const lines = ranking.map((entry) => {
       const pointsLabel = entry.points === 1 ? "ponto" : "pontos";
-      const recruitmentLabel = entry.approvedRecruitments === 1 ? "recrutamento" : "recrutamentos";
-      return `**${entry.position}.** <@${entry.recruiterUserId}> - **${entry.points}** ${pointsLabel} | **${entry.approvedRecruitments}** ${recruitmentLabel}`;
+      const recruitmentLabel = entry.recruitments === 1 ? "recrutamento" : "recrutamentos";
+      return `**${entry.position}.** <@${entry.userId}> - **${entry.points}** ${pointsLabel} | **${entry.recruitments}** ${recruitmentLabel} | **${entry.rankName}**`;
     });
 
     const embed = new EmbedBuilder()
-      .setTitle("Ranking de Recrutamento")
+      .setTitle("Ranking de Membros")
       .setColor(0xd63f3f)
       .setDescription(lines.join("\n"))
       .setTimestamp();
