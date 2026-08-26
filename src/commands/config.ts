@@ -4,7 +4,7 @@ import {
   PermissionFlagsBits,
   SlashCommandBuilder
 } from "discord.js";
-import { ChannelConfigKey, RoleConfigKey } from "../domain/types";
+import { ChannelConfigKey, NumberConfigKey, RoleConfigKey } from "../domain/types";
 import { memberIsAdmin, requireGuildMember } from "../utils/discord";
 import { logger } from "../utils/logger";
 import { SlashCommand } from "./types";
@@ -45,7 +45,9 @@ export const configCommand: SlashCommand = {
             .addChoices(
               { name: "Approval", value: "approval" },
               { name: "Recruitment", value: "recruitment" },
-              { name: "Blacklist", value: "blacklist" }
+              { name: "Blacklist", value: "blacklist" },
+              { name: "Verification", value: "verification" },
+              { name: "Exit", value: "exit" }
             )
         )
         .addChannelOption((option) =>
@@ -53,6 +55,28 @@ export const configCommand: SlashCommand = {
             .setName("channel")
             .setDescription("Canal a ser configurado.")
             .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+            .setRequired(true)
+        )
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("set-number")
+        .setDescription("Configura um parametro numerico do fluxo de recrutamento.")
+        .addStringOption((option) =>
+          option
+            .setName("tipo")
+            .setDescription("Parametro a ser configurado.")
+            .setRequired(true)
+            .addChoices(
+              { name: "Points (pontos por recrutamento)", value: "points" },
+              { name: "Credit window hours (janela de credito, em horas)", value: "credit-window-hours" }
+            )
+        )
+        .addIntegerOption((option) =>
+          option
+            .setName("valor")
+            .setDescription("Valor inteiro positivo.")
+            .setMinValue(1)
             .setRequired(true)
         )
     )
@@ -110,6 +134,21 @@ export const configCommand: SlashCommand = {
       return;
     }
 
+    if (subcommand === "set-number") {
+      const key = interaction.options.getString("tipo", true) as NumberConfigKey;
+      const value = interaction.options.getInteger("valor", true);
+      await store.setNumberConfig(guildId, key, value);
+      logger.info("config.number_set", {
+        guildId,
+        adminUserId: member.id,
+        adminUserTag: member.user.tag,
+        key,
+        value
+      });
+      await interaction.reply({ content: `Parametro \`${key}\` configurado como \`${value}\`.`, flags: MessageFlags.Ephemeral });
+      return;
+    }
+
     const config = await store.getGuildConfig(guildId);
     logger.info("config.show", {
       guildId,
@@ -124,7 +163,11 @@ export const configCommand: SlashCommand = {
         `Cargo member: <@&${config.memberRoleId}> (\`${config.memberRoleId}\`)`,
         `Canal approval: ${config.approvalChannelId ? `<#${config.approvalChannelId}> (\`${config.approvalChannelId}\`)` : "nao configurado"}`,
         `Canal recruitment: <#${config.recruitmentAnnouncementChannelId}> (\`${config.recruitmentAnnouncementChannelId}\`)`,
-        `Canal blacklist: <#${config.blacklistLogChannelId}> (\`${config.blacklistLogChannelId}\`)`
+        `Canal blacklist: <#${config.blacklistLogChannelId}> (\`${config.blacklistLogChannelId}\`)`,
+        `Canal verification: <#${config.memberVerificationChannelId}> (\`${config.memberVerificationChannelId}\`)`,
+        `Canal exit: <#${config.memberExitChannelId}> (\`${config.memberExitChannelId}\`)`,
+        `Pontos por recrutamento: \`${config.recruitmentPoints}\``,
+        `Janela de credito: \`${config.recruitmentCreditWindowHours}h\``
       ].join("\n"),
       flags: MessageFlags.Ephemeral
     });

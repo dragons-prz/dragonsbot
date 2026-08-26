@@ -19,6 +19,11 @@ import {
   DEFAULT_RECRUITMENT_ANNOUNCEMENT_CHANNEL_ID,
   GuildConfig,
   HierarchyRole,
+  MEMBER_EXIT_CHANNEL_ID,
+  MEMBER_VERIFICATION_CHANNEL_ID,
+  NumberConfigKey,
+  RECRUITMENT_CREDIT_WINDOW_HOURS,
+  RECRUITMENT_POINTS,
   MemberActionJob,
   MemberActionJobStatus,
   MemberActionJobType,
@@ -45,6 +50,10 @@ interface GuildConfigDocument {
   approvalChannelId: string | null;
   recruitmentAnnouncementChannelId?: string;
   blacklistLogChannelId?: string;
+  memberVerificationChannelId?: string;
+  memberExitChannelId?: string;
+  recruitmentPoints?: number;
+  recruitmentCreditWindowHours?: number;
   hierarchySeeded?: boolean;
 }
 
@@ -195,6 +204,26 @@ export class FirestoreDragonsStore implements DragonsStore {
       await ref.update({ blacklistLogChannelId: data.blacklistLogChannelId });
     }
 
+    if (!data.memberVerificationChannelId) {
+      data.memberVerificationChannelId = MEMBER_VERIFICATION_CHANNEL_ID;
+      await ref.update({ memberVerificationChannelId: data.memberVerificationChannelId });
+    }
+
+    if (!data.memberExitChannelId) {
+      data.memberExitChannelId = MEMBER_EXIT_CHANNEL_ID;
+      await ref.update({ memberExitChannelId: data.memberExitChannelId });
+    }
+
+    if (data.recruitmentPoints === undefined) {
+      data.recruitmentPoints = RECRUITMENT_POINTS;
+      await ref.update({ recruitmentPoints: data.recruitmentPoints });
+    }
+
+    if (data.recruitmentCreditWindowHours === undefined) {
+      data.recruitmentCreditWindowHours = RECRUITMENT_CREDIT_WINDOW_HOURS;
+      await ref.update({ recruitmentCreditWindowHours: data.recruitmentCreditWindowHours });
+    }
+
     if (!data.hierarchySeeded) {
       await this.seedDefaultHierarchyRoles(guildId);
       await ref.update({ hierarchySeeded: true });
@@ -220,11 +249,24 @@ export class FirestoreDragonsStore implements DragonsStore {
     const fieldByKey: Record<ChannelConfigKey, keyof GuildConfigDocument> = {
       approval: "approvalChannelId",
       recruitment: "recruitmentAnnouncementChannelId",
-      blacklist: "blacklistLogChannelId"
+      blacklist: "blacklistLogChannelId",
+      verification: "memberVerificationChannelId",
+      exit: "memberExitChannelId"
     };
 
     await this.ensureGuildConfig(guildId);
     await this.guildConfigRef(guildId).update({ [fieldByKey[key]]: channelId });
+    return this.getGuildConfig(guildId);
+  }
+
+  async setNumberConfig(guildId: string, key: NumberConfigKey, value: number): Promise<GuildConfig> {
+    const fieldByKey: Record<NumberConfigKey, keyof GuildConfigDocument> = {
+      points: "recruitmentPoints",
+      "credit-window-hours": "recruitmentCreditWindowHours"
+    };
+
+    await this.ensureGuildConfig(guildId);
+    await this.guildConfigRef(guildId).update({ [fieldByKey[key]]: value });
     return this.getGuildConfig(guildId);
   }
 
@@ -1144,6 +1186,10 @@ export class FirestoreDragonsStore implements DragonsStore {
       approvalChannelId: null,
       recruitmentAnnouncementChannelId: DEFAULT_RECRUITMENT_ANNOUNCEMENT_CHANNEL_ID,
       blacklistLogChannelId: DEFAULT_BLACKLIST_LOG_CHANNEL_ID,
+      memberVerificationChannelId: MEMBER_VERIFICATION_CHANNEL_ID,
+      memberExitChannelId: MEMBER_EXIT_CHANNEL_ID,
+      recruitmentPoints: RECRUITMENT_POINTS,
+      recruitmentCreditWindowHours: RECRUITMENT_CREDIT_WINDOW_HOURS,
       hierarchySeeded: false
     };
   }
@@ -1157,6 +1203,10 @@ export class FirestoreDragonsStore implements DragonsStore {
       approvalChannelId: data.approvalChannelId ?? null,
       recruitmentAnnouncementChannelId: data.recruitmentAnnouncementChannelId ?? DEFAULT_RECRUITMENT_ANNOUNCEMENT_CHANNEL_ID,
       blacklistLogChannelId: data.blacklistLogChannelId ?? DEFAULT_BLACKLIST_LOG_CHANNEL_ID,
+      memberVerificationChannelId: data.memberVerificationChannelId ?? MEMBER_VERIFICATION_CHANNEL_ID,
+      memberExitChannelId: data.memberExitChannelId ?? MEMBER_EXIT_CHANNEL_ID,
+      recruitmentPoints: data.recruitmentPoints ?? RECRUITMENT_POINTS,
+      recruitmentCreditWindowHours: data.recruitmentCreditWindowHours ?? RECRUITMENT_CREDIT_WINDOW_HOURS,
       hierarchySeeded: data.hierarchySeeded ?? false
     };
   }

@@ -88,37 +88,33 @@ Configura um canal usado pelo bot. Apenas administradores podem usar.
 /config set-channel tipo:approval channel:#canal-de-aprovacoes
 /config set-channel tipo:recruitment channel:#recrutamentos
 /config set-channel tipo:blacklist channel:#blacklist-logs
+/config set-channel tipo:verification channel:#fila-de-verificacao
+/config set-channel tipo:exit channel:#saidas
 ```
 
-O fluxo atual envia a aprovacao por DM para todos os membros com cargo `founder`, entao este canal nao e obrigatorio para recrutar.
+Todos os canais ficam salvos no documento `guildConfigs/{guildId}` do Firestore e podem tambem ser editados pelo painel (`dragons-platform`). Quando um campo ainda nao existe no documento, o bot preenche com o default abaixo na primeira leitura.
 
-O canal `recruitment` recebe o anuncio quando um recrutamento for aprovado. Se nao for configurado manualmente, o default e:
+O fluxo atual envia a aprovacao por DM para todos os membros com cargo `founder`, entao o canal `approval` nao e obrigatorio para recrutar.
 
-```text
-1522080152094249140
-```
+| tipo | uso | default |
+| --- | --- | --- |
+| `recruitment` | anuncio quando um recrutamento e aprovado | `1522080152094249140` |
+| `verification` | fila de verificacao de novos membros | `1534723901421256784` |
+| `exit` | registro de saida de membros | `1534735482460831884` |
+| `blacklist` | logs de adicao/remocao da blacklist | `1541992716496273478` |
 
-Novos membros entram na fila de verificacao no canal:
+### `/config set-number tipo:<points|credit-window-hours> valor:<inteiro>`
 
-```text
-1534723901421256784
-```
+Configura um parametro numerico do fluxo de recrutamento. Apenas administradores podem usar. Tambem editavel pelo painel.
 
-Saidas de membros sao registradas no canal:
-
-```text
-1534735482460831884
-```
-
-Logs de blacklist (adicoes/remocoes) vao para o canal `blacklist`. Se nao for configurado manualmente, o default e:
-
-```text
-1541992716496273478
-```
+| tipo | uso | default |
+| --- | --- | --- |
+| `points` | pontos creditados ao recrutador quando um recrutamento e aprovado | `8` |
+| `credit-window-hours` | janela (horas) apos a entrada em que ainda cabe pedir credito de recrutamento | `24` |
 
 ### `/config show`
 
-Mostra a configuracao atual de cargos e canal do servidor. Apenas administradores podem usar.
+Mostra a configuracao atual de cargos, canais e parametros numericos do servidor. Apenas administradores podem usar.
 
 ### `/recrutar usuario:<membro>`
 
@@ -137,7 +133,7 @@ Se o usuario ainda nao tem o cargo `member`, o fluxo e o recrutamento normal.
 Se o usuario ja tem o cargo `member`, o comando vira um pedido de credito de recrutamento. Esse pedido so e aceito quando:
 
 - o bot registrou a entrada do membro
-- a entrada aconteceu ha no maximo 24 horas
+- a entrada aconteceu dentro da janela de credito (`credit-window-hours`, default 24h)
 - o membro ainda nao possui recrutador creditado
 - nao existe outro recrutamento ou credito pendente
 
@@ -169,7 +165,7 @@ Se existir recrutamento pendente para o usuario, a verificacao direta e bloquead
 
 ## Fila de verificacao
 
-Quando um membro entra no servidor, o bot envia um card no canal `1534723901421256784` com:
+Quando um membro entra no servidor, o bot envia um card no canal `verification` (ver `/config set-channel`) com:
 
 - mencao ao cargo `founder` configurado
 - foto/avatar
@@ -182,11 +178,11 @@ O botao so pode ser usado por Founders. Ao clicar, o bot coloca a verificacao na
 
 Se um recrutador usar `/recrutar` antes da verificacao direta, o card vira `Recrutamento pendente` e o botao de verificacao direta e desativado.
 
-Se um recrutador usar `/recrutar` depois da verificacao direta, dentro de 24 horas da entrada, o card vira `Credito de recrutamento pendente`. Quando um Founder aprovar, o recrutador recebe pontos e o card vira `Credito de recrutamento aprovado`.
+Se um recrutador usar `/recrutar` depois da verificacao direta, dentro da janela de credito (`credit-window-hours`, default 24h), o card vira `Credito de recrutamento pendente`. Quando um Founder aprovar, o recrutador recebe pontos e o card vira `Credito de recrutamento aprovado`.
 
 ## Saidas
 
-Quando um membro sai do servidor, o bot envia um card no canal `1534735482460831884` com:
+Quando um membro sai do servidor, o bot envia um card no canal `exit` (ver `/config set-channel`) com:
 
 - foto/avatar
 - nome e mencao
@@ -272,7 +268,7 @@ Ao aprovar:
 
 - o recrutamento muda para `approved`
 - o usuario recrutado recebe o cargo `member`
-- o recrutador recebe 8 pontos
+- o recrutador recebe os pontos configurados (`points`, default 8)
 - o canal de recrutamento recebe um anuncio informando quem foi recrutado e por quem
 - os pontos entram no perfil generico de membro
 - se o recrutador atingir a pontuacao de um novo rank, o cargo de hierarquia e atualizado automaticamente
@@ -347,6 +343,7 @@ Eventos principais:
 - `recruitment.approval_blocked`
 - `config.role_set`
 - `config.channel_set`
+- `config.number_set`
 - `points.viewed`
 - `ranking.viewed`
 - `panel.created`
@@ -377,10 +374,10 @@ Checklist manual recomendado:
 - recrutar com cargo correto e confirmar DM para Founders
 - verificar com Founder e confirmar cargo de membro + rank base sem pontos para ninguem
 - confirmar que novo membro gera card no canal de verificacao
-- confirmar que `/recrutar` para membro verificado ha menos de 24h gera pedido de credito
+- confirmar que `/recrutar` para membro verificado dentro da janela de credito (default 24h) gera pedido de credito
 - confirmar que segundo pedido de credito para o mesmo membro e bloqueado
 - usar `/pontos` e confirmar a pontuacao atual
 - usar `/ranking` e confirmar a ordenacao por pontos/recrutamentos
 - tentar aprovar sem cargo Founder e confirmar bloqueio
-- aprovar com Founder e confirmar cargo de membro + 8 pontos
+- aprovar com Founder e confirmar cargo de membro + os pontos configurados (default 8)
 - tentar aprovar novamente e confirmar que nao duplica pontos
