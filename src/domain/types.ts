@@ -161,3 +161,25 @@ export interface EnqueueMemberActionJobResult {
   job: MemberActionJob;
   created: boolean;
 }
+
+export type PanelButtonStyle = "Primary" | "Secondary" | "Success" | "Danger";
+
+export interface PanelButtonConfig {
+  id: string;
+  label: string;
+  emoji: string | null;
+  style: PanelButtonStyle;
+  response: string;
+  order: number;
+}
+
+export interface PanelConfig {
+  id: string;
+  guildId: string;
+  title: string;
+  description: string;
+  imageUrl: string | null;
+  buttons: PanelButtonConfig[];
+  createdAt: string;
+  updatedAt: string;
+}

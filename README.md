@@ -218,6 +218,19 @@ Mostra sua pontuacao atual e a quantidade de recrutamentos aprovados feitos por 
 
 Mostra o ranking de membros do servidor, ordenado por pontos e depois por recrutamentos aprovados. O limite e opcional, com padrao 10 e maximo 25. A resposta e privada.
 
+### `/painel`
+
+Cria paineis informativos: uma mensagem com titulo, descricao, imagem opcional e ate 25 botoes, organizados em linhas de 5. Ao clicar em um botao, o usuario recebe uma resposta privada (visivel so para ele) com o texto configurado para aquele botao. Apenas administradores podem usar. Subcomandos:
+
+- `criar id:<texto> titulo:<texto> descricao:<texto>` - cria um painel novo (id e usado internamente, deve ser unico no servidor).
+- `set-imagem id:<texto> imagem:<anexo>` - define/atualiza a imagem do painel.
+- `add-botao id:<texto> label:<texto> resposta:<texto> estilo:<opcional> emoji:<opcional>` - adiciona um botao. `estilo` pode ser Cinza (padrao), Azul, Verde ou Vermelho.
+- `remover-botao id:<texto> botao-id:<texto>` - remove um botao pelo id gerado a partir do label.
+- `publicar id:<texto> canal:<canal>` - envia a mensagem do painel no canal indicado.
+- `listar` - lista os paineis do servidor com a quantidade de botoes de cada um.
+
+Os paineis ficam salvos na colecao `panels` do Firestore, o que permite reconfigurar sem reiniciar o bot e abre espaço para uma futura interface web de configuracao usar a mesma colecao.
+
 ## Aprovacao
 
 O botao `Adicionei na familia` so pode ser usado por membros com o cargo `founder`.
@@ -269,6 +282,7 @@ Colecoes usadas no Firestore:
 - subcolecao `recruitments/{id}/approvalMessages`
 - `memberEntries`
 - `memberActionJobs`
+- `panels`
 
 Se ja houver dados antigos em `recruiterPoints`/`recruiterPointEvents`, migre para a estrutura generica:
 
@@ -300,6 +314,11 @@ Eventos principais:
 - `config.channel_set`
 - `points.viewed`
 - `ranking.viewed`
+- `panel.created`
+- `panel.image_set`
+- `panel.button_added`
+- `panel.button_removed`
+- `panel.published`
 
 ## Validacao
 

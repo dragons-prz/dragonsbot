@@ -25,6 +25,8 @@ import {
   MemberProfile,
   MemberProfileResult,
   MemberRankingEntry,
+  PanelButtonConfig,
+  PanelConfig,
   Recruitment,
   RecruitmentKind,
   RecruitmentApprovalMessage,
@@ -108,6 +110,17 @@ interface HierarchyRoleDocument {
   roleId: string;
   points: number;
   order: number;
+}
+
+interface PanelDocument {
+  id: string;
+  guildId: string;
+  title: string;
+  description: string;
+  imageUrl: string | null;
+  buttons: PanelButtonConfig[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export class FirestoreDragonsStore implements DragonsStore {
@@ -761,6 +774,107 @@ export class FirestoreDragonsStore implements DragonsStore {
       .sort((a, b) => b.points - a.points || b.recruitments - a.recruitments || a.userId.localeCompare(b.userId))
       .slice(0, safeLimit)
       .map((entry, index) => ({ ...entry, position: index + 1 }));
+  }
+
+  async createPanel(guildId: string, id: string, title: string, description: string): Promise<PanelConfig> {
+    const ref = this.panelRef(guildId, id);
+    const snapshot = await ref.get();
+    if (snapshot.exists) {
+      throw new Error(`Ja existe um painel com o id "${id}" neste servidor.`);
+    }
+
+    const now = new Date().toISOString();
+    const document: PanelDocument = {
+      id,
+      guildId,
+      title,
+      description,
+      imageUrl: null,
+      buttons: [],
+      createdAt: now,
+      updatedAt: now
+    };
+    await ref.set(document);
+    return this.mapPanel(document);
+  }
+
+  async getPanel(guildId: string, id: string): Promise<PanelConfig | null> {
+    const snapshot = await this.panelRef(guildId, id).get();
+    return snapshot.exists ? this.mapPanel(snapshot.data() as PanelDocument) : null;
+  }
+
+  async listPanels(guildId: string): Promise<PanelConfig[]> {
+    const snapshot = await this.db.collection("panels").where("guildId", "==", guildId).get();
+    return snapshot.docs
+      .map((doc) => this.mapPanel(doc.data() as PanelDocument))
+      .sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  async setPanelImage(guildId: string, id: string, imageUrl: string): Promise<PanelConfig> {
+    const ref = this.panelRef(guildId, id);
+    const snapshot = await ref.get();
+    if (!snapshot.exists) {
+      throw new Error(`Painel "${id}" nao encontrado.`);
+    }
+
+    await ref.update({ imageUrl, updatedAt: new Date().toISOString() });
+    return this.getPanel(guildId, id) as Promise<PanelConfig>;
+  }
+
+  async addPanelButton(guildId: string, id: string, button: Omit<PanelButtonConfig, "order">): Promise<PanelConfig> {
+    const ref = this.panelRef(guildId, id);
+    const snapshot = await ref.get();
+    if (!snapshot.exists) {
+      throw new Error(`Painel "${id}" nao encontrado.`);
+    }
+
+    const data = snapshot.data() as PanelDocument;
+    if (data.buttons.some((existing) => existing.id === button.id)) {
+      throw new Error(`Ja existe um botao com o id "${button.id}" neste painel.`);
+    }
+    if (data.buttons.length >= 25) {
+      throw new Error("Este painel ja atingiu o limite de 25 botoes.");
+    }
+
+    const buttons = [...data.buttons, { ...button, order: data.buttons.length }];
+    await ref.update({ buttons, updatedAt: new Date().toISOString() });
+    return this.getPanel(guildId, id) as Promise<PanelConfig>;
+  }
+
+  async removePanelButton(guildId: string, id: string, buttonId: string): Promise<PanelConfig> {
+    const ref = this.panelRef(guildId, id);
+    const snapshot = await ref.get();
+    if (!snapshot.exists) {
+      throw new Error(`Painel "${id}" nao encontrado.`);
+    }
+
+    const data = snapshot.data() as PanelDocument;
+    const buttons = data.buttons
+      .filter((existing) => existing.id !== buttonId)
+      .map((existing, index) => ({ ...existing, order: index }));
+    await ref.update({ buttons, updatedAt: new Date().toISOString() });
+    return this.getPanel(guildId, id) as Promise<PanelConfig>;
+  }
+
+  async deletePanel(guildId: string, id: string): Promise<void> {
+    await this.panelRef(guildId, id).delete();
+  }
+
+  private mapPanel(data: PanelDocument): PanelConfig {
+    return {
+      id: data.id,
+      guildId: data.guildId,
+      title: data.title,
+      description: data.description,
+      imageUrl: data.imageUrl ?? null,
+      buttons: [...data.buttons].sort((a, b) => a.order - b.order),
+      createdAt: data.createdAt,
+      updatedAt: data.updatedAt
+    };
+  }
+
+  private panelRef(guildId: string, id: string) {
+    return this.db.collection("panels").doc(`${guildId}_${id}`);
   }
 
   private loadServiceAccount(): ServiceAccount {

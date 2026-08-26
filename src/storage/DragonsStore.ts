@@ -12,6 +12,8 @@ import {
   MemberProfile,
   MemberProfileResult,
   MemberRankingEntry,
+  PanelButtonConfig,
+  PanelConfig,
   Recruitment,
   RecruitmentApprovalMessage,
   RoleConfigKey
@@ -58,4 +60,12 @@ export interface DragonsStore {
   ensureMemberProfile(guildId: string, userId: string): Promise<MemberProfileResult>;
   getMemberProfile(guildId: string, userId: string): Promise<MemberProfileResult>;
   getMemberRanking(guildId: string, limit: number): Promise<MemberRankingEntry[]>;
+
+  createPanel(guildId: string, id: string, title: string, description: string): Promise<PanelConfig>;
+  getPanel(guildId: string, id: string): Promise<PanelConfig | null>;
+  listPanels(guildId: string): Promise<PanelConfig[]>;
+  setPanelImage(guildId: string, id: string, imageUrl: string): Promise<PanelConfig>;
+  addPanelButton(guildId: string, id: string, button: Omit<PanelButtonConfig, "order">): Promise<PanelConfig>;
+  removePanelButton(guildId: string, id: string, buttonId: string): Promise<PanelConfig>;
+  deletePanel(guildId: string, id: string): Promise<void>;
 }
