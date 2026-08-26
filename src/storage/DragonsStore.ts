@@ -67,6 +67,7 @@ export interface DragonsStore {
   getPanel(guildId: string, id: string): Promise<PanelConfig | null>;
   listPanels(guildId: string): Promise<PanelConfig[]>;
   setPanelImage(guildId: string, id: string, imageUrl: string): Promise<PanelConfig>;
+  setPanelColor(guildId: string, id: string, color: string | null): Promise<PanelConfig>;
   addPanelButton(guildId: string, id: string, button: Omit<PanelButtonConfig, "order">): Promise<PanelConfig>;
   removePanelButton(guildId: string, id: string, buttonId: string): Promise<PanelConfig>;
   deletePanel(guildId: string, id: string): Promise<void>;

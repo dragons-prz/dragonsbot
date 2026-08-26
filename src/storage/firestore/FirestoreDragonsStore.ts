@@ -123,6 +123,7 @@ interface PanelDocument {
   title: string;
   description: string;
   imageUrl: string | null;
+  color: string | null;
   buttons: PanelButtonConfig[];
   createdAt: string;
   updatedAt: string;
@@ -825,6 +826,7 @@ export class FirestoreDragonsStore implements DragonsStore {
       title,
       description,
       imageUrl: null,
+      color: null,
       buttons: [],
       createdAt: now,
       updatedAt: now
@@ -853,6 +855,17 @@ export class FirestoreDragonsStore implements DragonsStore {
     }
 
     await ref.update({ imageUrl, updatedAt: new Date().toISOString() });
+    return this.getPanel(guildId, id) as Promise<PanelConfig>;
+  }
+
+  async setPanelColor(guildId: string, id: string, color: string | null): Promise<PanelConfig> {
+    const ref = this.panelRef(guildId, id);
+    const snapshot = await ref.get();
+    if (!snapshot.exists) {
+      throw new Error(`Painel "${id}" nao encontrado.`);
+    }
+
+    await ref.update({ color, updatedAt: new Date().toISOString() });
     return this.getPanel(guildId, id) as Promise<PanelConfig>;
   }
 
@@ -1019,7 +1032,12 @@ export class FirestoreDragonsStore implements DragonsStore {
       title: data.title,
       description: data.description,
       imageUrl: data.imageUrl ?? null,
-      buttons: [...data.buttons].sort((a, b) => a.order - b.order),
+      color: data.color ?? null,
+      buttons: [...data.buttons].sort((a, b) => a.order - b.order).map((button) => ({
+        ...button,
+        responseImageUrl: button.responseImageUrl ?? null,
+        responseColor: button.responseColor ?? null
+      })),
       createdAt: data.createdAt,
       updatedAt: data.updatedAt,
       publishedChannelId: data.publishedChannelId ?? null,

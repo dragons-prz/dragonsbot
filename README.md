@@ -229,16 +229,17 @@ Mostra o ranking de membros do servidor, ordenado por pontos e depois por recrut
 
 ### `/painel`
 
-Cria paineis informativos: uma mensagem com titulo, descricao, imagem opcional e ate 25 botoes, organizados em linhas de 5. Ao clicar em um botao, o usuario recebe uma resposta privada (visivel so para ele) com o texto configurado para aquele botao. Apenas administradores podem usar. Subcomandos:
+Cria paineis informativos: uma mensagem com titulo, descricao, imagem opcional, cor lateral opcional e ate 25 botoes, organizados em linhas de 5. Ao clicar em um botao, o usuario recebe uma resposta privada (visivel so para ele) em formato de embed, com o texto, a imagem e a cor configurados para aquele botao — por ser um embed, a resposta sempre tem a barra colorida do Discord a esquerda, mesmo quando nenhuma cor customizada foi definida (nesse caso o Discord usa a cor padrao dele). Apenas administradores podem usar. Subcomandos:
 
-- `criar id:<texto> titulo:<texto> descricao:<texto>` - cria um painel novo (id e usado internamente, deve ser unico no servidor).
+- `criar id:<texto> titulo:<texto> descricao:<texto> cor:<opcional>` - cria um painel novo (id e usado internamente, deve ser unico no servidor). `cor` e hex (ex: `#E03131`); se informada com formato invalido, o comando recusa com uma mensagem de erro.
 - `set-imagem id:<texto> imagem:<anexo>` - define/atualiza a imagem do painel.
-- `add-botao id:<texto> label:<texto> resposta:<texto> estilo:<opcional> emoji:<opcional>` - adiciona um botao. `estilo` pode ser Cinza (padrao), Azul, Verde ou Vermelho.
-- `remover-botao id:<texto> botao-id:<texto>` - remove um botao pelo id gerado a partir do label.
+- `set-cor id:<texto> cor:<texto>` - define/atualiza a cor lateral do embed do painel. Aceita hex (ex: `#E03131`) ou a palavra `limpar` (tambem aceita `nenhuma`, `remover`, `none`) para voltar a cor padrao do Discord (`color: null`).
+- `add-botao id:<texto> label:<texto> resposta:<texto> estilo:<opcional> emoji:<opcional> resposta-imagem:<opcional> resposta-cor:<opcional>` - adiciona um botao. `estilo` pode ser Cinza (padrao), Azul, Verde ou Vermelho. `resposta-imagem` e um anexo exibido na resposta ao clicar; `resposta-cor` e hex (ex: `#E03131`) para a cor lateral dessa resposta. Ambos sao opcionais e ficam `null` quando omitidos.
+- `remover-botao id:<texto> botao-id:<texto>` - remove um botao pelo id gerado a partir do label. Nao existe "editar botao": para mudar label, resposta, imagem ou cor de um botao ja existente, remova e recrie com `add-botao`.
 - `publicar id:<texto> canal:<canal>` - publica a mensagem do painel no canal indicado. Se o painel ja tiver sido publicado antes nesse mesmo canal (`publishedChannelId`/`publishedMessageId`), o comando **edita** a mensagem existente em vez de enviar uma nova; se a mensagem publicada anteriormente tiver sido apagada, ele envia uma nova mensagem normalmente. A resposta do comando deixa claro se o painel foi publicado ou atualizado.
 - `listar` - lista os paineis do servidor com a quantidade de botoes de cada um.
 
-Os paineis ficam salvos na colecao `panels` do Firestore, o que permite reconfigurar sem reiniciar o bot e e usada pela interface web de configuracao (`dragons-platform`) para criar e editar paineis. Cada painel guarda `publishedChannelId`/`publishedMessageId` (nulos ate a primeira publicacao) para saber onde a mensagem foi publicada por ultimo.
+Os paineis ficam salvos na colecao `panels` do Firestore, o que permite reconfigurar sem reiniciar o bot e e usada pela interface web de configuracao (`dragons-platform`) para criar e editar paineis. Cada painel guarda `publishedChannelId`/`publishedMessageId` (nulos ate a primeira publicacao) para saber onde a mensagem foi publicada por ultimo, alem de `color: string | null` (cor lateral do embed principal, hex tipo `#E03131`). Cada botao (`PanelButtonConfig`) guarda tambem `responseImageUrl: string | null` (imagem exibida na resposta) e `responseColor: string | null` (cor lateral da resposta). Documentos criados antes dessa mudanca nao tem esses campos gravados no Firestore; o bot os trata como ausentes = `null` ao ler, sem quebrar.
 
 ### Fila de publicacao de paineis (`panelJobs`)
 
