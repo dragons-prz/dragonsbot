@@ -8,6 +8,15 @@ export const DEFAULT_BLACKLIST_LOG_CHANNEL_ID = "1541992716496273478";
 export const RECRUITMENT_POINTS = 8;
 export const RECRUITMENT_CREDIT_WINDOW_HOURS = 24;
 
+/**
+ * Estas constantes deixaram de ser lidas direto pelo fluxo do bot: agora
+ * sao apenas o VALOR PADRAO de campos do `GuildConfig`
+ * (`memberVerificationChannelId`, `memberExitChannelId`, `recruitmentPoints`,
+ * `recruitmentCreditWindowHours`), aplicados pela store quando o documento
+ * `guildConfigs/{guildId}` ainda nao tem o campo. O painel
+ * (`dragons-platform`) edita esses campos; o bot le do config.
+ */
+
 export interface HierarchyRole {
   name: string;
   roleId: string;
@@ -41,7 +50,13 @@ export const DEFAULT_HIERARCHY_ROLES: HierarchyRole[] = [
 ];
 
 export type RoleConfigKey = "recruiter" | "founder" | "member";
-export type ChannelConfigKey = "approval" | "recruitment" | "blacklist";
+export type ChannelConfigKey =
+  | "approval"
+  | "recruitment"
+  | "blacklist"
+  | "verification"
+  | "exit";
+export type NumberConfigKey = "points" | "credit-window-hours";
 export type RecruitmentStatus = "pending" | "approved";
 export type RecruitmentKind = "standard" | "credit";
 export type MemberEntryStatus = "pending" | "verified_direct" | "recruitment_pending" | "recruited" | "credit_pending" | "credited" | "left";
@@ -56,6 +71,14 @@ export interface GuildConfig {
   approvalChannelId: string | null;
   recruitmentAnnouncementChannelId: string;
   blacklistLogChannelId: string;
+  /** Canal onde o card de fila de verificacao de novos membros e postado. */
+  memberVerificationChannelId: string;
+  /** Canal onde o card de saida de membro e postado. */
+  memberExitChannelId: string;
+  /** Pontos creditados ao recrutador quando um recrutamento e aprovado. */
+  recruitmentPoints: number;
+  /** Janela (horas) apos a entrada em que ainda cabe pedir credito de recrutamento. */
+  recruitmentCreditWindowHours: number;
   hierarchySeeded: boolean;
 }
 

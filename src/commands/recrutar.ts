@@ -12,12 +12,8 @@ import {
   SlashCommandBuilder
 } from "discord.js";
 import {
-  MEMBER_EXIT_CHANNEL_ID,
-  MEMBER_VERIFICATION_CHANNEL_ID,
   MemberActionJob,
-  MemberEntry,
-  RECRUITMENT_CREDIT_WINDOW_HOURS,
-  RECRUITMENT_POINTS
+  MemberEntry
 } from "../domain/types";
 import {
   getGuildId,
@@ -29,7 +25,6 @@ import { ButtonHandler, SlashCommand } from "./types";
 
 const APPROVE_PREFIX = "recruitment:approve:";
 const VERIFY_MEMBER_PREFIX = "member:verify:";
-const CREDIT_WINDOW_MS = RECRUITMENT_CREDIT_WINDOW_HOURS * 60 * 60 * 1000;
 const JOB_WORKER_INTERVAL_MS = 5000;
 const JOB_STALE_AFTER_MS = 5 * 60 * 1000;
 
@@ -249,18 +244,18 @@ export async function announceNewMember(member: GuildMember, store: Parameters<S
     joinedAt
   });
 
-  const channel = await member.guild.channels.fetch(MEMBER_VERIFICATION_CHANNEL_ID).catch(() => null);
+  const config = await store.getGuildConfig(member.guild.id);
+  const channel = await member.guild.channels.fetch(config.memberVerificationChannelId).catch(() => null);
   if (!channel?.isTextBased() || !("send" in channel)) {
     logger.warn("member_entry.announcement_channel_not_found", {
       guildId: member.guild.id,
       userId: member.id,
       userTag: member.user.tag,
-      channelId: MEMBER_VERIFICATION_CHANNEL_ID
+      channelId: config.memberVerificationChannelId
     });
     return;
   }
 
-  const config = await store.getGuildConfig(member.guild.id);
   const message = await channel.send({
     content: `<@&${config.founderRoleId}> novo membro aguardando verificacao.`,
     allowedMentions: { roles: [config.founderRoleId] },
@@ -283,17 +278,18 @@ export async function announceMemberExit(member: GuildMember | PartialGuildMembe
   }
 
   const guildId = member.guild.id;
+  const config = await store.getGuildConfig(guildId);
   const entry = await store.getMemberEntry(guildId, member.id);
   const updatedEntry = entry ? await store.markMemberEntryLeft(guildId, member.id) : null;
   const pending = await store.findPendingRecruitmentByUser(guildId, member.id);
 
-  const channel = await member.guild.channels.fetch(MEMBER_EXIT_CHANNEL_ID).catch(() => null);
+  const channel = await member.guild.channels.fetch(config.memberExitChannelId).catch(() => null);
   if (!channel?.isTextBased() || !("send" in channel)) {
     logger.warn("member_exit.channel_not_found", {
       guildId,
       userId: member.id,
       userTag: member.user.tag,
-      channelId: MEMBER_EXIT_CHANNEL_ID
+      channelId: config.memberExitChannelId
     });
     return;
   }
@@ -336,14 +332,14 @@ export async function announceMemberExit(member: GuildMember | PartialGuildMembe
     guildId,
     userId: member.id,
     userTag: member.user.tag,
-    channelId: MEMBER_EXIT_CHANNEL_ID,
+    channelId: config.memberExitChannelId,
     entryStatus: entry?.status,
     leftAt
   });
 }
 
-function isCreditWindowOpen(entry: MemberEntry) {
-  return Date.now() - new Date(entry.joinedAt).getTime() <= CREDIT_WINDOW_MS;
+function isCreditWindowOpen(entry: MemberEntry, windowHours: number) {
+  return Date.now() - new Date(entry.joinedAt).getTime() <= windowHours * 60 * 60 * 1000;
 }
 
 type ApplyMemberRolesResult =
@@ -489,7 +485,7 @@ async function processVerifyMemberJob(client: Client, store: CommandStore, job: 
   if (updatedEntry) {
     await editMemberEntryCard(client, updatedEntry, recruitMember as GuildMember, {
       title: "Membro verificado diretamente",
-      description: `Verificado por <@${founder.id}>. Credito de recrutamento ainda pode ser solicitado por ate ${RECRUITMENT_CREDIT_WINDOW_HOURS}h apos a entrada, se ainda nao houver recrutador creditado.`,
+      description: `Verificado por <@${founder.id}>. Credito de recrutamento ainda pode ser solicitado por ate ${config.recruitmentCreditWindowHours}h apos a entrada, se ainda nao houver recrutador creditado.`,
       color: 0x2f9e44,
       buttonDisabled: true,
       buttonLabel: "Verificado",
@@ -591,7 +587,7 @@ async function processApproveRecruitmentJob(client: Client, store: CommandStore,
   const approval = await store.approveRecruitmentAndAddMemberPoints(
     recruitment.id,
     founder.id,
-    RECRUITMENT_POINTS,
+    config.recruitmentPoints,
     recruitment.kind === "credit"
       ? `Credito de recrutamento #${recruitment.id} aprovado`
       : `Recrutamento #${recruitment.id} aprovado`
@@ -723,7 +719,7 @@ async function processApproveRecruitmentJob(client: Client, store: CommandStore,
     recruiterUserTag: recruiterMember?.user.tag,
     recruitUserId: approved.recruitUserId,
     recruitUserTag: recruitMember.user.tag,
-    pointsAdded: RECRUITMENT_POINTS,
+    pointsAdded: config.recruitmentPoints,
     memberTotalPoints: promotedMember.points,
     memberRecruitments: promotedMember.recruitments,
     memberRankName: promotedMember.rankName,
@@ -987,7 +983,7 @@ export const recrutarCommand: SlashCommand = {
         return;
       }
 
-      if (!isCreditWindowOpen(memberEntry)) {
+      if (!isCreditWindowOpen(memberEntry, config.recruitmentCreditWindowHours)) {
         logger.warn("recruitment.blocked", {
           reason: "credit_window_expired",
           guildId,
@@ -997,7 +993,7 @@ export const recrutarCommand: SlashCommand = {
           recruitUserTag: recruitUser.tag,
           joinedAt: memberEntry.joinedAt
         });
-        await interaction.editReply(`Este usuario ja foi verificado e a janela de ${RECRUITMENT_CREDIT_WINDOW_HOURS}h para credito expirou.`);
+        await interaction.editReply(`Este usuario ja foi verificado e a janela de ${config.recruitmentCreditWindowHours}h para credito expirou.`);
         return;
       }
 

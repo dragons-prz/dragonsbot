@@ -13,6 +13,7 @@ import {
   MemberProfile,
   MemberProfileResult,
   MemberRankingEntry,
+  NumberConfigKey,
   PanelButtonConfig,
   PanelConfig,
   PanelJob,
@@ -28,6 +29,7 @@ export interface DragonsStore {
   getGuildConfig(guildId: string): Promise<GuildConfig>;
   setRoleConfig(guildId: string, key: RoleConfigKey, roleId: string): Promise<GuildConfig>;
   setChannelConfig(guildId: string, key: ChannelConfigKey, channelId: string): Promise<GuildConfig>;
+  setNumberConfig(guildId: string, key: NumberConfigKey, value: number): Promise<GuildConfig>;
   seedDefaultHierarchyRoles(guildId: string): Promise<HierarchyRole[]>;
   getHierarchyRoles(guildId: string): Promise<HierarchyRole[]>;
 
