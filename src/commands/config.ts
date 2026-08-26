@@ -44,7 +44,8 @@ export const configCommand: SlashCommand = {
             .setRequired(true)
             .addChoices(
               { name: "Approval", value: "approval" },
-              { name: "Recruitment", value: "recruitment" }
+              { name: "Recruitment", value: "recruitment" },
+              { name: "Blacklist", value: "blacklist" }
             )
         )
         .addChannelOption((option) =>
@@ -122,7 +123,8 @@ export const configCommand: SlashCommand = {
         `Cargo founder: <@&${config.founderRoleId}> (\`${config.founderRoleId}\`)`,
         `Cargo member: <@&${config.memberRoleId}> (\`${config.memberRoleId}\`)`,
         `Canal approval: ${config.approvalChannelId ? `<#${config.approvalChannelId}> (\`${config.approvalChannelId}\`)` : "nao configurado"}`,
-        `Canal recruitment: <#${config.recruitmentAnnouncementChannelId}> (\`${config.recruitmentAnnouncementChannelId}\`)`
+        `Canal recruitment: <#${config.recruitmentAnnouncementChannelId}> (\`${config.recruitmentAnnouncementChannelId}\`)`,
+        `Canal blacklist: <#${config.blacklistLogChannelId}> (\`${config.blacklistLogChannelId}\`)`
       ].join("\n"),
       flags: MessageFlags.Ephemeral
     });

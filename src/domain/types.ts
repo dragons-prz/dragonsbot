@@ -4,6 +4,7 @@ export const DEFAULT_MEMBER_ROLE_ID = "1488092923588247563";
 export const DEFAULT_RECRUITMENT_ANNOUNCEMENT_CHANNEL_ID = "1522080152094249140";
 export const MEMBER_VERIFICATION_CHANNEL_ID = "1534723901421256784";
 export const MEMBER_EXIT_CHANNEL_ID = "1534735482460831884";
+export const DEFAULT_BLACKLIST_LOG_CHANNEL_ID = "1541992716496273478";
 export const RECRUITMENT_POINTS = 8;
 export const RECRUITMENT_CREDIT_WINDOW_HOURS = 24;
 
@@ -40,7 +41,7 @@ export const DEFAULT_HIERARCHY_ROLES: HierarchyRole[] = [
 ];
 
 export type RoleConfigKey = "recruiter" | "founder" | "member";
-export type ChannelConfigKey = "approval" | "recruitment";
+export type ChannelConfigKey = "approval" | "recruitment" | "blacklist";
 export type RecruitmentStatus = "pending" | "approved";
 export type RecruitmentKind = "standard" | "credit";
 export type MemberEntryStatus = "pending" | "verified_direct" | "recruitment_pending" | "recruited" | "credit_pending" | "credited" | "left";
@@ -54,6 +55,7 @@ export interface GuildConfig {
   memberRoleId: string;
   approvalChannelId: string | null;
   recruitmentAnnouncementChannelId: string;
+  blacklistLogChannelId: string;
   hierarchySeeded: boolean;
 }
 
@@ -160,6 +162,14 @@ export interface EnqueueMemberActionJobInput {
 export interface EnqueueMemberActionJobResult {
   job: MemberActionJob;
   created: boolean;
+}
+
+export interface BlacklistEntry {
+  guildId: string;
+  userId: string;
+  reason: string;
+  addedByUserId: string;
+  addedAt: string;
 }
 
 export type PanelButtonStyle = "Primary" | "Secondary" | "Success" | "Danger";

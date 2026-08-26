@@ -930,6 +930,21 @@ export const recrutarCommand: SlashCommand = {
       return;
     }
 
+    const blacklistEntry = await store.getBlacklistEntry(guildId, recruitUser.id);
+    if (blacklistEntry) {
+      logger.warn("recruitment.blocked", {
+        reason: "blacklisted",
+        guildId,
+        recruiterUserId: recruiter.id,
+        recruiterUserTag: recruiter.user.tag,
+        recruitUserId: recruitUser.id,
+        recruitUserTag: recruitUser.tag,
+        blacklistReason: blacklistEntry.reason
+      });
+      await interaction.editReply(`⚠️ Este usuario esta na blacklist e nao pode ser recrutado. Motivo: ${blacklistEntry.reason}`);
+      return;
+    }
+
     const pending = await store.findPendingRecruitmentByUser(guildId, recruitUser.id);
     if (pending) {
       if (!pending.approvalMessageId) {
@@ -1181,6 +1196,21 @@ export const verificarCommand: SlashCommand = {
       return;
     }
 
+    const blacklistEntry = await store.getBlacklistEntry(guildId, recruitUser.id);
+    if (blacklistEntry) {
+      logger.warn("member_verification.blocked", {
+        reason: "blacklisted",
+        guildId,
+        founderUserId: founder.id,
+        founderUserTag: founder.user.tag,
+        recruitUserId: recruitUser.id,
+        recruitUserTag: recruitUser.tag,
+        blacklistReason: blacklistEntry.reason
+      });
+      await interaction.editReply(`⚠️ Este usuario esta na blacklist e nao pode ser verificado. Motivo: ${blacklistEntry.reason}`);
+      return;
+    }
+
     if (recruitMember.roles.cache.has(config.memberRoleId)) {
       logger.warn("member_verification.blocked", {
         reason: "recruit_already_member",
@@ -1293,6 +1323,20 @@ export const verifyMemberButton: ButtonHandler = {
     const recruitMember = await guild.members.fetch(userId).catch(() => null);
     if (!recruitMember) {
       await interaction.editReply("O usuario saiu do servidor ou nao foi encontrado.");
+      return;
+    }
+
+    const blacklistEntry = await store.getBlacklistEntry(guildId, userId);
+    if (blacklistEntry) {
+      logger.warn("member_verification.blocked", {
+        reason: "blacklisted",
+        guildId,
+        founderUserId: founder.id,
+        founderUserTag: founder.user.tag,
+        recruitUserId: userId,
+        blacklistReason: blacklistEntry.reason
+      });
+      await interaction.editReply(`⚠️ Este usuario esta na blacklist e nao pode ser verificado. Motivo: ${blacklistEntry.reason}`);
       return;
     }
 

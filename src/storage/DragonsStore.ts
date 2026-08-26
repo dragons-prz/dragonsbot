@@ -1,4 +1,5 @@
 import {
+  BlacklistEntry,
   ChannelConfigKey,
   CreateMemberEntryInput,
   CreateRecruitmentInput,
@@ -68,4 +69,9 @@ export interface DragonsStore {
   addPanelButton(guildId: string, id: string, button: Omit<PanelButtonConfig, "order">): Promise<PanelConfig>;
   removePanelButton(guildId: string, id: string, buttonId: string): Promise<PanelConfig>;
   deletePanel(guildId: string, id: string): Promise<void>;
+
+  addToBlacklist(guildId: string, userId: string, reason: string, addedByUserId: string): Promise<BlacklistEntry>;
+  removeFromBlacklist(guildId: string, userId: string): Promise<BlacklistEntry | null>;
+  getBlacklistEntry(guildId: string, userId: string): Promise<BlacklistEntry | null>;
+  listBlacklist(guildId: string): Promise<BlacklistEntry[]>;
 }

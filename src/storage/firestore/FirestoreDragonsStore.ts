@@ -5,11 +5,13 @@ import { AppEnv } from "../../config/env";
 import { logger } from "../../utils/logger";
 import {
   ApprovedRecruitmentResult,
+  BlacklistEntry,
   ChannelConfigKey,
   CreateMemberEntryInput,
   CreateRecruitmentInput,
   EnqueueMemberActionJobInput,
   EnqueueMemberActionJobResult,
+  DEFAULT_BLACKLIST_LOG_CHANNEL_ID,
   DEFAULT_HIERARCHY_ROLES,
   DEFAULT_FOUNDER_ROLE_ID,
   DEFAULT_MEMBER_ROLE_ID,
@@ -40,6 +42,7 @@ interface GuildConfigDocument {
   memberRoleId: string;
   approvalChannelId: string | null;
   recruitmentAnnouncementChannelId?: string;
+  blacklistLogChannelId?: string;
   hierarchySeeded?: boolean;
 }
 
@@ -123,6 +126,14 @@ interface PanelDocument {
   updatedAt: string;
 }
 
+interface BlacklistDocument {
+  guildId: string;
+  userId: string;
+  reason: string;
+  addedByUserId: string;
+  addedAt: string;
+}
+
 export class FirestoreDragonsStore implements DragonsStore {
   private db: Firestore;
 
@@ -160,6 +171,11 @@ export class FirestoreDragonsStore implements DragonsStore {
       await ref.update({ recruitmentAnnouncementChannelId: data.recruitmentAnnouncementChannelId });
     }
 
+    if (!data.blacklistLogChannelId) {
+      data.blacklistLogChannelId = DEFAULT_BLACKLIST_LOG_CHANNEL_ID;
+      await ref.update({ blacklistLogChannelId: data.blacklistLogChannelId });
+    }
+
     if (!data.hierarchySeeded) {
       await this.seedDefaultHierarchyRoles(guildId);
       await ref.update({ hierarchySeeded: true });
@@ -182,13 +198,14 @@ export class FirestoreDragonsStore implements DragonsStore {
   }
 
   async setChannelConfig(guildId: string, key: ChannelConfigKey, channelId: string): Promise<GuildConfig> {
-    if (key !== "approval" && key !== "recruitment") {
-      throw new Error(`Canal de configuracao nao suportado: ${key}`);
-    }
+    const fieldByKey: Record<ChannelConfigKey, keyof GuildConfigDocument> = {
+      approval: "approvalChannelId",
+      recruitment: "recruitmentAnnouncementChannelId",
+      blacklist: "blacklistLogChannelId"
+    };
 
     await this.ensureGuildConfig(guildId);
-    const field = key === "approval" ? "approvalChannelId" : "recruitmentAnnouncementChannelId";
-    await this.guildConfigRef(guildId).update({ [field]: channelId });
+    await this.guildConfigRef(guildId).update({ [fieldByKey[key]]: channelId });
     return this.getGuildConfig(guildId);
   }
 
@@ -877,6 +894,57 @@ export class FirestoreDragonsStore implements DragonsStore {
     return this.db.collection("panels").doc(`${guildId}_${id}`);
   }
 
+  async addToBlacklist(guildId: string, userId: string, reason: string, addedByUserId: string): Promise<BlacklistEntry> {
+    const now = new Date().toISOString();
+    const document: BlacklistDocument = {
+      guildId,
+      userId,
+      reason,
+      addedByUserId,
+      addedAt: now
+    };
+    await this.blacklistRef(guildId, userId).set(document);
+    return this.mapBlacklistEntry(document);
+  }
+
+  async removeFromBlacklist(guildId: string, userId: string): Promise<BlacklistEntry | null> {
+    const ref = this.blacklistRef(guildId, userId);
+    const snapshot = await ref.get();
+    if (!snapshot.exists) {
+      return null;
+    }
+
+    const entry = this.mapBlacklistEntry(snapshot.data() as BlacklistDocument);
+    await ref.delete();
+    return entry;
+  }
+
+  async getBlacklistEntry(guildId: string, userId: string): Promise<BlacklistEntry | null> {
+    const snapshot = await this.blacklistRef(guildId, userId).get();
+    return snapshot.exists ? this.mapBlacklistEntry(snapshot.data() as BlacklistDocument) : null;
+  }
+
+  async listBlacklist(guildId: string): Promise<BlacklistEntry[]> {
+    const snapshot = await this.db.collection("blacklist").where("guildId", "==", guildId).get();
+    return snapshot.docs
+      .map((doc) => this.mapBlacklistEntry(doc.data() as BlacklistDocument))
+      .sort((a, b) => b.addedAt.localeCompare(a.addedAt));
+  }
+
+  private mapBlacklistEntry(data: BlacklistDocument): BlacklistEntry {
+    return {
+      guildId: data.guildId,
+      userId: data.userId,
+      reason: data.reason,
+      addedByUserId: data.addedByUserId,
+      addedAt: data.addedAt
+    };
+  }
+
+  private blacklistRef(guildId: string, userId: string) {
+    return this.db.collection("blacklist").doc(`${guildId}_${userId}`);
+  }
+
   private loadServiceAccount(): ServiceAccount {
     if (!this.env.firebaseServiceAccountPath) {
       throw new Error("Firestore requer FIREBASE_SERVICE_ACCOUNT_PATH apontando para o JSON da service account.");
@@ -900,6 +968,7 @@ export class FirestoreDragonsStore implements DragonsStore {
       memberRoleId: DEFAULT_MEMBER_ROLE_ID,
       approvalChannelId: null,
       recruitmentAnnouncementChannelId: DEFAULT_RECRUITMENT_ANNOUNCEMENT_CHANNEL_ID,
+      blacklistLogChannelId: DEFAULT_BLACKLIST_LOG_CHANNEL_ID,
       hierarchySeeded: false
     };
   }
@@ -912,6 +981,7 @@ export class FirestoreDragonsStore implements DragonsStore {
       memberRoleId: data.memberRoleId,
       approvalChannelId: data.approvalChannelId ?? null,
       recruitmentAnnouncementChannelId: data.recruitmentAnnouncementChannelId ?? DEFAULT_RECRUITMENT_ANNOUNCEMENT_CHANNEL_ID,
+      blacklistLogChannelId: data.blacklistLogChannelId ?? DEFAULT_BLACKLIST_LOG_CHANNEL_ID,
       hierarchySeeded: data.hierarchySeeded ?? false
     };
   }

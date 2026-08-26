@@ -87,6 +87,7 @@ Configura um canal usado pelo bot. Apenas administradores podem usar.
 ```text
 /config set-channel tipo:approval channel:#canal-de-aprovacoes
 /config set-channel tipo:recruitment channel:#recrutamentos
+/config set-channel tipo:blacklist channel:#blacklist-logs
 ```
 
 O fluxo atual envia a aprovacao por DM para todos os membros com cargo `founder`, entao este canal nao e obrigatorio para recrutar.
@@ -109,6 +110,12 @@ Saidas de membros sao registradas no canal:
 1534735482460831884
 ```
 
+Logs de blacklist (adicoes/remocoes) vao para o canal `blacklist`. Se nao for configurado manualmente, o default e:
+
+```text
+1541992716496273478
+```
+
 ### `/config show`
 
 Mostra a configuracao atual de cargos e canal do servidor. Apenas administradores podem usar.
@@ -121,6 +128,7 @@ Regras:
 
 - quem usa o comando precisa ter o cargo `recruiter`
 - o usuario precisa estar no servidor
+- o usuario nao pode estar na blacklist
 - nao pode existir outro recrutamento pendente para o mesmo usuario
 - precisa existir pelo menos um Founder com DM aberta para receber a aprovacao
 
@@ -152,6 +160,7 @@ Regras:
 - quem usa o comando precisa ter o cargo `founder`
 - o usuario precisa estar no servidor
 - o usuario nao pode ja ter o cargo `member`
+- o usuario nao pode estar na blacklist
 - se houver recrutamento pendente para o mesmo usuario, a verificacao direta e bloqueada
 
 Quando executado com sucesso, o bot aplica o cargo `member`, garante o perfil do membro no Firestore e aplica o rank base configurado na hierarquia.
@@ -231,6 +240,16 @@ Cria paineis informativos: uma mensagem com titulo, descricao, imagem opcional e
 
 Os paineis ficam salvos na colecao `panels` do Firestore, o que permite reconfigurar sem reiniciar o bot e abre espaço para uma futura interface web de configuracao usar a mesma colecao.
 
+### `/blacklist`
+
+Gerencia a lista de usuarios que nunca podem ser verificados ou recrutados. Apenas quem tem o cargo `founder` pode usar. Subcomandos:
+
+- `add usuario:<membro> motivo:<texto>` - adiciona o usuario na blacklist. Founders nao podem ser adicionados (o comando bloqueia essa tentativa).
+- `remove usuario:<membro>` - remove o usuario da blacklist.
+- `listar` - lista os usuarios atualmente na blacklist com o motivo e quem adicionou.
+
+Enquanto um usuario estiver na blacklist, `/recrutar`, `/verificar` e o botao `Verificar` do card de entrada ficam bloqueados para ele, mostrando o motivo do bloqueio. Toda adicao/remocao gera um log com foto do usuario, motivo e responsavel no canal `blacklist` (veja `/config set-channel`). Os registros ficam na colecao `blacklist` do Firestore.
+
 ## Aprovacao
 
 O botao `Adicionei na familia` so pode ser usado por membros com o cargo `founder`.
@@ -283,6 +302,7 @@ Colecoes usadas no Firestore:
 - `memberEntries`
 - `memberActionJobs`
 - `panels`
+- `blacklist`
 
 Se ja houver dados antigos em `recruiterPoints`/`recruiterPointEvents`, migre para a estrutura generica:
 
@@ -319,6 +339,9 @@ Eventos principais:
 - `panel.button_added`
 - `panel.button_removed`
 - `panel.published`
+- `blacklist.added`
+- `blacklist.removed`
+- `blacklist.blocked`
 
 ## Validacao
 
