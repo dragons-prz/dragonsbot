@@ -7,6 +7,7 @@ import {
 } from "discord.js";
 import { loadEnv } from "./config/env";
 import { buttonHandlers, commands } from "./commands";
+import { announceMemberExit, announceNewMember, startMemberActionJobWorker } from "./commands/recrutar";
 import { SlashCommand } from "./commands/types";
 import { createStore } from "./storage/createStore";
 import { safeReply } from "./utils/discord";
@@ -25,12 +26,38 @@ async function main(): Promise<void> {
   const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
   });
+  let stopMemberActionJobWorker: () => void = () => undefined;
 
   client.once(Events.ClientReady, (readyClient) => {
     logger.info("bot.ready", {
       userId: readyClient.user.id,
       tag: readyClient.user.tag
     });
+    stopMemberActionJobWorker = startMemberActionJobWorker(client, store);
+  });
+
+  client.on(Events.GuildMemberAdd, async (member) => {
+    try {
+      await announceNewMember(member, store);
+    } catch (error) {
+      logger.error("member_entry.announcement_failed", error, {
+        guildId: member.guild.id,
+        userId: member.id,
+        userTag: member.user.tag
+      });
+    }
+  });
+
+  client.on(Events.GuildMemberRemove, async (member) => {
+    try {
+      await announceMemberExit(member, store);
+    } catch (error) {
+      logger.error("member_exit.announcement_failed", error, {
+        guildId: member.guild.id,
+        userId: member.id,
+        userTag: member.user.tag
+      });
+    }
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
@@ -118,6 +145,7 @@ async function main(): Promise<void> {
 
   const shutdown = async () => {
     logger.info("bot.shutdown");
+    stopMemberActionJobWorker();
     client.destroy();
     await store.close();
     process.exit(0);
