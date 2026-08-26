@@ -29,6 +29,8 @@ import {
   MemberRankingEntry,
   PanelButtonConfig,
   PanelConfig,
+  PanelJob,
+  PanelJobStatus,
   Recruitment,
   RecruitmentKind,
   RecruitmentApprovalMessage,
@@ -122,6 +124,22 @@ interface PanelDocument {
   description: string;
   imageUrl: string | null;
   buttons: PanelButtonConfig[];
+  createdAt: string;
+  updatedAt: string;
+  publishedChannelId?: string | null;
+  publishedMessageId?: string | null;
+}
+
+interface PanelJobDocument {
+  id: string;
+  guildId: string;
+  panelId: string;
+  channelId: string;
+  requestedByUserId: string;
+  status: PanelJobStatus;
+  messageId: string | null;
+  attempts: number;
+  error: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -877,6 +895,123 @@ export class FirestoreDragonsStore implements DragonsStore {
     await this.panelRef(guildId, id).delete();
   }
 
+  async setPanelPublishedMessage(guildId: string, id: string, channelId: string, messageId: string): Promise<void> {
+    const ref = this.panelRef(guildId, id);
+    const snapshot = await ref.get();
+    if (!snapshot.exists) {
+      throw new Error(`Painel "${id}" nao encontrado.`);
+    }
+
+    await ref.update({
+      publishedChannelId: channelId,
+      publishedMessageId: messageId,
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  async claimNextPendingPanelJob(): Promise<PanelJob | null> {
+    // Sorted in memory (rather than via `.orderBy("createdAt")` combined with the
+    // `.where("status", ...)` equality clause) to avoid requiring a new Firestore
+    // composite index just for this low-volume internal queue.
+    const snapshot = await this.db
+      .collection("panelJobs")
+      .where("status", "==", "pending")
+      .get();
+
+    if (snapshot.empty) {
+      return null;
+    }
+
+    const oldestDoc = snapshot.docs.reduce((oldest, doc) => {
+      const oldestCreatedAt = (oldest.data() as PanelJobDocument).createdAt;
+      const currentCreatedAt = (doc.data() as PanelJobDocument).createdAt;
+      return currentCreatedAt < oldestCreatedAt ? doc : oldest;
+    });
+
+    const ref = oldestDoc.ref;
+    return this.db.runTransaction(async (transaction) => {
+      const currentSnapshot = await transaction.get(ref);
+      if (!currentSnapshot.exists) {
+        return null;
+      }
+
+      const current = currentSnapshot.data() as PanelJobDocument;
+      if (current.status !== "pending") {
+        return null;
+      }
+
+      const now = new Date().toISOString();
+      const updated: PanelJobDocument = {
+        ...current,
+        status: "processing",
+        updatedAt: now
+      };
+      transaction.set(ref, updated);
+      return this.mapPanelJob(updated);
+    });
+  }
+
+  async completePanelJob(id: string, messageId: string): Promise<void> {
+    const now = new Date().toISOString();
+    await this.panelJobRef(id).set(
+      {
+        status: "completed",
+        messageId,
+        error: null,
+        updatedAt: now
+      },
+      { merge: true }
+    );
+  }
+
+  async failPanelJob(id: string, error: string): Promise<void> {
+    const now = new Date().toISOString();
+    await this.db.runTransaction(async (transaction) => {
+      const ref = this.panelJobRef(id);
+      const snapshot = await transaction.get(ref);
+      const current = snapshot.data() as PanelJobDocument | undefined;
+      transaction.set(
+        ref,
+        {
+          status: "failed",
+          error,
+          attempts: (current?.attempts ?? 0) + 1,
+          updatedAt: now
+        },
+        { merge: true }
+      );
+    });
+  }
+
+  async resetStalePanelJobs(staleAfterMs: number): Promise<number> {
+    const cutoff = Date.now() - staleAfterMs;
+    const snapshot = await this.db
+      .collection("panelJobs")
+      .where("status", "==", "processing")
+      .get();
+
+    const staleDocs = snapshot.docs.filter((doc) => {
+      const data = doc.data() as PanelJobDocument;
+      return new Date(data.updatedAt).getTime() <= cutoff;
+    });
+
+    if (staleDocs.length === 0) {
+      return 0;
+    }
+
+    const batch = this.db.batch();
+    const now = new Date().toISOString();
+    for (const doc of staleDocs) {
+      batch.update(doc.ref, {
+        status: "pending",
+        error: "Reset automatico de job travado.",
+        updatedAt: now
+      });
+    }
+    await batch.commit();
+    return staleDocs.length;
+  }
+
   private mapPanel(data: PanelDocument): PanelConfig {
     return {
       id: data.id,
@@ -886,12 +1021,34 @@ export class FirestoreDragonsStore implements DragonsStore {
       imageUrl: data.imageUrl ?? null,
       buttons: [...data.buttons].sort((a, b) => a.order - b.order),
       createdAt: data.createdAt,
+      updatedAt: data.updatedAt,
+      publishedChannelId: data.publishedChannelId ?? null,
+      publishedMessageId: data.publishedMessageId ?? null
+    };
+  }
+
+  private mapPanelJob(data: PanelJobDocument): PanelJob {
+    return {
+      id: data.id,
+      guildId: data.guildId,
+      panelId: data.panelId,
+      channelId: data.channelId,
+      requestedByUserId: data.requestedByUserId,
+      status: data.status,
+      messageId: data.messageId ?? null,
+      attempts: data.attempts,
+      error: data.error ?? null,
+      createdAt: data.createdAt,
       updatedAt: data.updatedAt
     };
   }
 
   private panelRef(guildId: string, id: string) {
     return this.db.collection("panels").doc(`${guildId}_${id}`);
+  }
+
+  private panelJobRef(id: string) {
+    return this.db.collection("panelJobs").doc(id);
   }
 
   async addToBlacklist(guildId: string, userId: string, reason: string, addedByUserId: string): Promise<BlacklistEntry> {

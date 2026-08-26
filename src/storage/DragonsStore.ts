@@ -15,6 +15,7 @@ import {
   MemberRankingEntry,
   PanelButtonConfig,
   PanelConfig,
+  PanelJob,
   Recruitment,
   RecruitmentApprovalMessage,
   RoleConfigKey
@@ -69,6 +70,12 @@ export interface DragonsStore {
   addPanelButton(guildId: string, id: string, button: Omit<PanelButtonConfig, "order">): Promise<PanelConfig>;
   removePanelButton(guildId: string, id: string, buttonId: string): Promise<PanelConfig>;
   deletePanel(guildId: string, id: string): Promise<void>;
+  setPanelPublishedMessage(guildId: string, id: string, channelId: string, messageId: string): Promise<void>;
+
+  claimNextPendingPanelJob(): Promise<PanelJob | null>;
+  completePanelJob(id: string, messageId: string): Promise<void>;
+  failPanelJob(id: string, error: string): Promise<void>;
+  resetStalePanelJobs(staleAfterMs: number): Promise<number>;
 
   addToBlacklist(guildId: string, userId: string, reason: string, addedByUserId: string): Promise<BlacklistEntry>;
   removeFromBlacklist(guildId: string, userId: string): Promise<BlacklistEntry | null>;

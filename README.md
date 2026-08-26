@@ -235,10 +235,23 @@ Cria paineis informativos: uma mensagem com titulo, descricao, imagem opcional e
 - `set-imagem id:<texto> imagem:<anexo>` - define/atualiza a imagem do painel.
 - `add-botao id:<texto> label:<texto> resposta:<texto> estilo:<opcional> emoji:<opcional>` - adiciona um botao. `estilo` pode ser Cinza (padrao), Azul, Verde ou Vermelho.
 - `remover-botao id:<texto> botao-id:<texto>` - remove um botao pelo id gerado a partir do label.
-- `publicar id:<texto> canal:<canal>` - envia a mensagem do painel no canal indicado.
+- `publicar id:<texto> canal:<canal>` - publica a mensagem do painel no canal indicado. Se o painel ja tiver sido publicado antes nesse mesmo canal (`publishedChannelId`/`publishedMessageId`), o comando **edita** a mensagem existente em vez de enviar uma nova; se a mensagem publicada anteriormente tiver sido apagada, ele envia uma nova mensagem normalmente. A resposta do comando deixa claro se o painel foi publicado ou atualizado.
 - `listar` - lista os paineis do servidor com a quantidade de botoes de cada um.
 
-Os paineis ficam salvos na colecao `panels` do Firestore, o que permite reconfigurar sem reiniciar o bot e abre espaço para uma futura interface web de configuracao usar a mesma colecao.
+Os paineis ficam salvos na colecao `panels` do Firestore, o que permite reconfigurar sem reiniciar o bot e e usada pela interface web de configuracao (`dragons-platform`) para criar e editar paineis. Cada painel guarda `publishedChannelId`/`publishedMessageId` (nulos ate a primeira publicacao) para saber onde a mensagem foi publicada por ultimo.
+
+### Fila de publicacao de paineis (`panelJobs`)
+
+A interface web nao publica paineis diretamente no Discord: a montagem da mensagem (embed + linhas de botoes) e uma unica fonte de verdade que mora neste bot. Em vez disso, o painel web grava um job na colecao `panelJobs` do Firestore e o bot consome essa fila, do mesmo jeito que `memberActionJobs` funciona para recrutamento/verificacao.
+
+Campos de cada job:
+
+- `id`, `guildId`, `panelId`, `channelId`, `requestedByUserId`
+- `status`: `pending`, `processing`, `completed` ou `failed`
+- `messageId`: preenchido quando o job e concluido
+- `attempts`, `error`, `createdAt`, `updatedAt`
+
+O worker interno roda a cada 5 segundos, pega o job `pending` mais antigo (numa transacao, para dois processos nunca pegarem o mesmo job), publica a mensagem do painel (editando a mensagem existente quando o painel ja foi publicado nesse mesmo canal, ou enviando uma nova quando essa mensagem foi apagada ou nao existe ainda) e marca o job como `completed` com o `messageId` resultante. Se qualquer etapa falhar, o job vira `failed` com uma mensagem de erro legivel e o worker continua processando os proximos jobs normalmente. Jobs travados em `processing` por mais de 5 minutos (por exemplo, apos um reinicio do bot) voltam automaticamente para `pending`.
 
 ### `/blacklist`
 
@@ -302,6 +315,7 @@ Colecoes usadas no Firestore:
 - `memberEntries`
 - `memberActionJobs`
 - `panels`
+- `panelJobs`
 - `blacklist`
 
 Se ja houver dados antigos em `recruiterPoints`/`recruiterPointEvents`, migre para a estrutura generica:
@@ -338,7 +352,13 @@ Eventos principais:
 - `panel.image_set`
 - `panel.button_added`
 - `panel.button_removed`
-- `panel.published`
+- `panel.published_message_missing`
+- `panel_job.claimed`
+- `panel_job.published`
+- `panel_job.updated`
+- `panel_job.failed`
+- `panel_job.stale_reset`
+- `panel_job.worker_failed`
 - `blacklist.added`
 - `blacklist.removed`
 - `blacklist.blocked`
