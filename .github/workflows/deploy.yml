@@ -3,7 +3,7 @@ name: Deploy
 on:
   push:
     branches:
-      - master
+      - main
 
 concurrency:
   group: deploy-production
@@ -28,7 +28,6 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key_path: /tmp/vps_key
           port: ${{ secrets.VPS_PORT || 22 }}
-          script_stop: true
           command_timeout: 10m
           script: |
             set -e
