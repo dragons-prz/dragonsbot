@@ -5,8 +5,13 @@ import { AppEnv } from "../../config/env";
 import { logger } from "../../utils/logger";
 import {
   ApprovedRecruitmentResult,
+  BlacklistEntry,
   ChannelConfigKey,
+  CreateMemberEntryInput,
   CreateRecruitmentInput,
+  EnqueueMemberActionJobInput,
+  EnqueueMemberActionJobResult,
+  DEFAULT_BLACKLIST_LOG_CHANNEL_ID,
   DEFAULT_HIERARCHY_ROLES,
   DEFAULT_FOUNDER_ROLE_ID,
   DEFAULT_MEMBER_ROLE_ID,
@@ -14,10 +19,18 @@ import {
   DEFAULT_RECRUITMENT_ANNOUNCEMENT_CHANNEL_ID,
   GuildConfig,
   HierarchyRole,
+  MemberActionJob,
+  MemberActionJobStatus,
+  MemberActionJobType,
+  MemberEntry,
+  MemberEntryStatus,
   MemberProfile,
   MemberProfileResult,
   MemberRankingEntry,
+  PanelButtonConfig,
+  PanelConfig,
   Recruitment,
+  RecruitmentKind,
   RecruitmentApprovalMessage,
   RoleConfigKey
 } from "../../domain/types";
@@ -29,6 +42,7 @@ interface GuildConfigDocument {
   memberRoleId: string;
   approvalChannelId: string | null;
   recruitmentAnnouncementChannelId?: string;
+  blacklistLogChannelId?: string;
   hierarchySeeded?: boolean;
 }
 
@@ -37,11 +51,44 @@ interface RecruitmentDocument {
   guildId: string;
   recruitUserId: string;
   recruiterUserId: string;
+  kind?: RecruitmentKind;
   status: "pending" | "approved";
   approvalMessageId: string | null;
   approvedByUserId: string | null;
   createdAt: string;
   approvedAt: string | null;
+}
+
+interface MemberEntryDocument {
+  guildId: string;
+  userId: string;
+  status: MemberEntryStatus;
+  joinedAt: string;
+  verificationChannelId: string | null;
+  verificationMessageId: string | null;
+  verifiedByUserId: string | null;
+  verifiedAt: string | null;
+  recruiterUserId: string | null;
+  creditedAt: string | null;
+  leftAt?: string | null;
+  recruitmentId: number | null;
+  updatedAt: string;
+}
+
+interface MemberActionJobDocument {
+  id: string;
+  type: MemberActionJobType;
+  status: MemberActionJobStatus;
+  guildId: string;
+  userId: string;
+  requestedByUserId: string;
+  recruitmentId: number | null;
+  attempts: number;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
+  updatedAt: string;
 }
 
 interface MemberDocument {
@@ -66,6 +113,25 @@ interface HierarchyRoleDocument {
   roleId: string;
   points: number;
   order: number;
+}
+
+interface PanelDocument {
+  id: string;
+  guildId: string;
+  title: string;
+  description: string;
+  imageUrl: string | null;
+  buttons: PanelButtonConfig[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface BlacklistDocument {
+  guildId: string;
+  userId: string;
+  reason: string;
+  addedByUserId: string;
+  addedAt: string;
 }
 
 export class FirestoreDragonsStore implements DragonsStore {
@@ -105,6 +171,11 @@ export class FirestoreDragonsStore implements DragonsStore {
       await ref.update({ recruitmentAnnouncementChannelId: data.recruitmentAnnouncementChannelId });
     }
 
+    if (!data.blacklistLogChannelId) {
+      data.blacklistLogChannelId = DEFAULT_BLACKLIST_LOG_CHANNEL_ID;
+      await ref.update({ blacklistLogChannelId: data.blacklistLogChannelId });
+    }
+
     if (!data.hierarchySeeded) {
       await this.seedDefaultHierarchyRoles(guildId);
       await ref.update({ hierarchySeeded: true });
@@ -127,13 +198,14 @@ export class FirestoreDragonsStore implements DragonsStore {
   }
 
   async setChannelConfig(guildId: string, key: ChannelConfigKey, channelId: string): Promise<GuildConfig> {
-    if (key !== "approval" && key !== "recruitment") {
-      throw new Error(`Canal de configuracao nao suportado: ${key}`);
-    }
+    const fieldByKey: Record<ChannelConfigKey, keyof GuildConfigDocument> = {
+      approval: "approvalChannelId",
+      recruitment: "recruitmentAnnouncementChannelId",
+      blacklist: "blacklistLogChannelId"
+    };
 
     await this.ensureGuildConfig(guildId);
-    const field = key === "approval" ? "approvalChannelId" : "recruitmentAnnouncementChannelId";
-    await this.guildConfigRef(guildId).update({ [field]: channelId });
+    await this.guildConfigRef(guildId).update({ [fieldByKey[key]]: channelId });
     return this.getGuildConfig(guildId);
   }
 
@@ -167,6 +239,277 @@ export class FirestoreDragonsStore implements DragonsStore {
     return roles;
   }
 
+  async createOrUpdateMemberEntry(input: CreateMemberEntryInput): Promise<MemberEntry> {
+    const now = new Date().toISOString();
+    const ref = this.memberEntryRef(input.guildId, input.userId);
+    const snapshot = await ref.get();
+    if (snapshot.exists) {
+      const data = snapshot.data() as MemberEntryDocument;
+      const updated: MemberEntryDocument = {
+        ...data,
+        status: "pending",
+        joinedAt: input.joinedAt,
+        verificationChannelId: null,
+        verificationMessageId: null,
+        verifiedByUserId: null,
+        verifiedAt: null,
+        recruiterUserId: null,
+        creditedAt: null,
+        leftAt: null,
+        recruitmentId: null,
+        updatedAt: now
+      };
+      await ref.set(updated);
+      return this.mapMemberEntry(updated);
+    }
+
+    const document: MemberEntryDocument = {
+      guildId: input.guildId,
+      userId: input.userId,
+      status: "pending",
+      joinedAt: input.joinedAt,
+      verificationChannelId: null,
+      verificationMessageId: null,
+      verifiedByUserId: null,
+      verifiedAt: null,
+      recruiterUserId: null,
+      creditedAt: null,
+      leftAt: null,
+      recruitmentId: null,
+      updatedAt: now
+    };
+
+    await ref.set(document);
+    return this.mapMemberEntry(document);
+  }
+
+  async getMemberEntry(guildId: string, userId: string): Promise<MemberEntry | null> {
+    const snapshot = await this.memberEntryRef(guildId, userId).get();
+    return snapshot.exists ? this.mapMemberEntry(snapshot.data() as MemberEntryDocument) : null;
+  }
+
+  async setMemberEntryVerificationMessage(
+    guildId: string,
+    userId: string,
+    channelId: string,
+    messageId: string
+  ): Promise<MemberEntry | null> {
+    return this.updateMemberEntry(guildId, userId, {
+      verificationChannelId: channelId,
+      verificationMessageId: messageId
+    });
+  }
+
+  async markMemberEntryVerifiedDirect(
+    guildId: string,
+    userId: string,
+    verifiedByUserId: string
+  ): Promise<MemberEntry | null> {
+    const now = new Date().toISOString();
+    return this.updateMemberEntry(guildId, userId, {
+      status: "verified_direct",
+      verifiedByUserId,
+      verifiedAt: now
+    });
+  }
+
+  async markMemberEntryRecruitmentPending(
+    guildId: string,
+    userId: string,
+    recruiterUserId: string,
+    recruitmentId: number
+  ): Promise<MemberEntry | null> {
+    return this.updateMemberEntry(guildId, userId, {
+      status: "recruitment_pending",
+      recruiterUserId,
+      recruitmentId
+    });
+  }
+
+  async markMemberEntryRecruited(
+    guildId: string,
+    userId: string,
+    recruiterUserId: string,
+    approvedByUserId: string,
+    recruitmentId: number
+  ): Promise<MemberEntry | null> {
+    const now = new Date().toISOString();
+    return this.updateMemberEntry(guildId, userId, {
+      status: "recruited",
+      recruiterUserId,
+      verifiedByUserId: approvedByUserId,
+      verifiedAt: now,
+      creditedAt: now,
+      recruitmentId
+    });
+  }
+
+  async markMemberEntryCreditPending(
+    guildId: string,
+    userId: string,
+    recruiterUserId: string,
+    recruitmentId: number
+  ): Promise<MemberEntry | null> {
+    return this.updateMemberEntry(guildId, userId, {
+      status: "credit_pending",
+      recruiterUserId,
+      recruitmentId
+    });
+  }
+
+  async markMemberEntryCredited(
+    guildId: string,
+    userId: string,
+    recruiterUserId: string,
+    approvedByUserId: string,
+    recruitmentId: number
+  ): Promise<MemberEntry | null> {
+    const now = new Date().toISOString();
+    return this.updateMemberEntry(guildId, userId, {
+      status: "credited",
+      recruiterUserId,
+      verifiedByUserId: approvedByUserId,
+      creditedAt: now,
+      recruitmentId
+    });
+  }
+
+  async markMemberEntryLeft(guildId: string, userId: string): Promise<MemberEntry | null> {
+    const now = new Date().toISOString();
+    return this.updateMemberEntry(guildId, userId, {
+      status: "left",
+      leftAt: now
+    });
+  }
+
+  async enqueueMemberActionJob(input: EnqueueMemberActionJobInput): Promise<EnqueueMemberActionJobResult> {
+    const now = new Date().toISOString();
+    const id = this.memberActionJobId(input);
+    const ref = this.memberActionJobRef(id);
+
+    return this.db.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(ref);
+      if (snapshot.exists) {
+        const current = this.mapMemberActionJob(snapshot.data() as MemberActionJobDocument);
+        if (
+          current.status === "pending" ||
+          current.status === "processing" ||
+          (current.status === "completed" && input.type === "approve_recruitment")
+        ) {
+          return { job: current, created: false };
+        }
+
+        const updated: MemberActionJobDocument = {
+          ...current,
+          status: "pending",
+          attempts: 0,
+          startedAt: null,
+          finishedAt: null,
+          error: null,
+          updatedAt: now
+        };
+        transaction.set(ref, updated);
+        return { job: this.mapMemberActionJob(updated), created: true };
+      }
+
+      const document: MemberActionJobDocument = {
+        id,
+        type: input.type,
+        status: "pending",
+        guildId: input.guildId,
+        userId: input.userId,
+        requestedByUserId: input.requestedByUserId,
+        recruitmentId: input.recruitmentId ?? null,
+        attempts: 0,
+        createdAt: now,
+        startedAt: null,
+        finishedAt: null,
+        error: null,
+        updatedAt: now
+      };
+      transaction.set(ref, document);
+      return { job: this.mapMemberActionJob(document), created: true };
+    });
+  }
+
+  async claimNextPendingMemberActionJob(): Promise<MemberActionJob | null> {
+    const snapshot = await this.db
+      .collection("memberActionJobs")
+      .where("status", "==", "pending")
+      .limit(1)
+      .get();
+
+    if (snapshot.empty) {
+      return null;
+    }
+
+    const ref = snapshot.docs[0].ref;
+    return this.db.runTransaction(async (transaction) => {
+      const currentSnapshot = await transaction.get(ref);
+      if (!currentSnapshot.exists) {
+        return null;
+      }
+
+      const current = currentSnapshot.data() as MemberActionJobDocument;
+      if (current.status !== "pending") {
+        return null;
+      }
+
+      const now = new Date().toISOString();
+      const updated: MemberActionJobDocument = {
+        ...current,
+        status: "processing",
+        attempts: current.attempts + 1,
+        startedAt: now,
+        updatedAt: now
+      };
+      transaction.set(ref, updated);
+      return this.mapMemberActionJob(updated);
+    });
+  }
+
+  async completeMemberActionJob(id: string): Promise<void> {
+    await this.updateMemberActionJobStatus(id, "completed", null);
+  }
+
+  async failMemberActionJob(id: string, error: string): Promise<void> {
+    await this.updateMemberActionJobStatus(id, "failed", error);
+  }
+
+  async cancelMemberActionJob(id: string, reason: string): Promise<void> {
+    await this.updateMemberActionJobStatus(id, "cancelled", reason);
+  }
+
+  async resetStaleProcessingMemberActionJobs(staleAfterMs: number): Promise<number> {
+    const cutoff = Date.now() - staleAfterMs;
+    const snapshot = await this.db
+      .collection("memberActionJobs")
+      .where("status", "==", "processing")
+      .get();
+
+    const staleDocs = snapshot.docs.filter((doc) => {
+      const data = doc.data() as MemberActionJobDocument;
+      return !data.startedAt || new Date(data.startedAt).getTime() <= cutoff;
+    });
+
+    if (staleDocs.length === 0) {
+      return 0;
+    }
+
+    const batch = this.db.batch();
+    const now = new Date().toISOString();
+    for (const doc of staleDocs) {
+      batch.update(doc.ref, {
+        status: "pending",
+        startedAt: null,
+        error: "Reset automatico de job travado.",
+        updatedAt: now
+      });
+    }
+    await batch.commit();
+    return staleDocs.length;
+  }
+
   async createRecruitment(input: CreateRecruitmentInput): Promise<Recruitment> {
     const now = new Date().toISOString();
     const recruitment = await this.db.runTransaction(async (transaction) => {
@@ -180,6 +523,7 @@ export class FirestoreDragonsStore implements DragonsStore {
         guildId: input.guildId,
         recruitUserId: input.recruitUserId,
         recruiterUserId: input.recruiterUserId,
+        kind: input.kind ?? "standard",
         status: "pending",
         approvalMessageId: null,
         approvedByUserId: null,
@@ -449,6 +793,158 @@ export class FirestoreDragonsStore implements DragonsStore {
       .map((entry, index) => ({ ...entry, position: index + 1 }));
   }
 
+  async createPanel(guildId: string, id: string, title: string, description: string): Promise<PanelConfig> {
+    const ref = this.panelRef(guildId, id);
+    const snapshot = await ref.get();
+    if (snapshot.exists) {
+      throw new Error(`Ja existe um painel com o id "${id}" neste servidor.`);
+    }
+
+    const now = new Date().toISOString();
+    const document: PanelDocument = {
+      id,
+      guildId,
+      title,
+      description,
+      imageUrl: null,
+      buttons: [],
+      createdAt: now,
+      updatedAt: now
+    };
+    await ref.set(document);
+    return this.mapPanel(document);
+  }
+
+  async getPanel(guildId: string, id: string): Promise<PanelConfig | null> {
+    const snapshot = await this.panelRef(guildId, id).get();
+    return snapshot.exists ? this.mapPanel(snapshot.data() as PanelDocument) : null;
+  }
+
+  async listPanels(guildId: string): Promise<PanelConfig[]> {
+    const snapshot = await this.db.collection("panels").where("guildId", "==", guildId).get();
+    return snapshot.docs
+      .map((doc) => this.mapPanel(doc.data() as PanelDocument))
+      .sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  async setPanelImage(guildId: string, id: string, imageUrl: string): Promise<PanelConfig> {
+    const ref = this.panelRef(guildId, id);
+    const snapshot = await ref.get();
+    if (!snapshot.exists) {
+      throw new Error(`Painel "${id}" nao encontrado.`);
+    }
+
+    await ref.update({ imageUrl, updatedAt: new Date().toISOString() });
+    return this.getPanel(guildId, id) as Promise<PanelConfig>;
+  }
+
+  async addPanelButton(guildId: string, id: string, button: Omit<PanelButtonConfig, "order">): Promise<PanelConfig> {
+    const ref = this.panelRef(guildId, id);
+    const snapshot = await ref.get();
+    if (!snapshot.exists) {
+      throw new Error(`Painel "${id}" nao encontrado.`);
+    }
+
+    const data = snapshot.data() as PanelDocument;
+    if (data.buttons.some((existing) => existing.id === button.id)) {
+      throw new Error(`Ja existe um botao com o id "${button.id}" neste painel.`);
+    }
+    if (data.buttons.length >= 25) {
+      throw new Error("Este painel ja atingiu o limite de 25 botoes.");
+    }
+
+    const buttons = [...data.buttons, { ...button, order: data.buttons.length }];
+    await ref.update({ buttons, updatedAt: new Date().toISOString() });
+    return this.getPanel(guildId, id) as Promise<PanelConfig>;
+  }
+
+  async removePanelButton(guildId: string, id: string, buttonId: string): Promise<PanelConfig> {
+    const ref = this.panelRef(guildId, id);
+    const snapshot = await ref.get();
+    if (!snapshot.exists) {
+      throw new Error(`Painel "${id}" nao encontrado.`);
+    }
+
+    const data = snapshot.data() as PanelDocument;
+    const buttons = data.buttons
+      .filter((existing) => existing.id !== buttonId)
+      .map((existing, index) => ({ ...existing, order: index }));
+    await ref.update({ buttons, updatedAt: new Date().toISOString() });
+    return this.getPanel(guildId, id) as Promise<PanelConfig>;
+  }
+
+  async deletePanel(guildId: string, id: string): Promise<void> {
+    await this.panelRef(guildId, id).delete();
+  }
+
+  private mapPanel(data: PanelDocument): PanelConfig {
+    return {
+      id: data.id,
+      guildId: data.guildId,
+      title: data.title,
+      description: data.description,
+      imageUrl: data.imageUrl ?? null,
+      buttons: [...data.buttons].sort((a, b) => a.order - b.order),
+      createdAt: data.createdAt,
+      updatedAt: data.updatedAt
+    };
+  }
+
+  private panelRef(guildId: string, id: string) {
+    return this.db.collection("panels").doc(`${guildId}_${id}`);
+  }
+
+  async addToBlacklist(guildId: string, userId: string, reason: string, addedByUserId: string): Promise<BlacklistEntry> {
+    const now = new Date().toISOString();
+    const document: BlacklistDocument = {
+      guildId,
+      userId,
+      reason,
+      addedByUserId,
+      addedAt: now
+    };
+    await this.blacklistRef(guildId, userId).set(document);
+    return this.mapBlacklistEntry(document);
+  }
+
+  async removeFromBlacklist(guildId: string, userId: string): Promise<BlacklistEntry | null> {
+    const ref = this.blacklistRef(guildId, userId);
+    const snapshot = await ref.get();
+    if (!snapshot.exists) {
+      return null;
+    }
+
+    const entry = this.mapBlacklistEntry(snapshot.data() as BlacklistDocument);
+    await ref.delete();
+    return entry;
+  }
+
+  async getBlacklistEntry(guildId: string, userId: string): Promise<BlacklistEntry | null> {
+    const snapshot = await this.blacklistRef(guildId, userId).get();
+    return snapshot.exists ? this.mapBlacklistEntry(snapshot.data() as BlacklistDocument) : null;
+  }
+
+  async listBlacklist(guildId: string): Promise<BlacklistEntry[]> {
+    const snapshot = await this.db.collection("blacklist").where("guildId", "==", guildId).get();
+    return snapshot.docs
+      .map((doc) => this.mapBlacklistEntry(doc.data() as BlacklistDocument))
+      .sort((a, b) => b.addedAt.localeCompare(a.addedAt));
+  }
+
+  private mapBlacklistEntry(data: BlacklistDocument): BlacklistEntry {
+    return {
+      guildId: data.guildId,
+      userId: data.userId,
+      reason: data.reason,
+      addedByUserId: data.addedByUserId,
+      addedAt: data.addedAt
+    };
+  }
+
+  private blacklistRef(guildId: string, userId: string) {
+    return this.db.collection("blacklist").doc(`${guildId}_${userId}`);
+  }
+
   private loadServiceAccount(): ServiceAccount {
     if (!this.env.firebaseServiceAccountPath) {
       throw new Error("Firestore requer FIREBASE_SERVICE_ACCOUNT_PATH apontando para o JSON da service account.");
@@ -472,6 +968,7 @@ export class FirestoreDragonsStore implements DragonsStore {
       memberRoleId: DEFAULT_MEMBER_ROLE_ID,
       approvalChannelId: null,
       recruitmentAnnouncementChannelId: DEFAULT_RECRUITMENT_ANNOUNCEMENT_CHANNEL_ID,
+      blacklistLogChannelId: DEFAULT_BLACKLIST_LOG_CHANNEL_ID,
       hierarchySeeded: false
     };
   }
@@ -484,6 +981,7 @@ export class FirestoreDragonsStore implements DragonsStore {
       memberRoleId: data.memberRoleId,
       approvalChannelId: data.approvalChannelId ?? null,
       recruitmentAnnouncementChannelId: data.recruitmentAnnouncementChannelId ?? DEFAULT_RECRUITMENT_ANNOUNCEMENT_CHANNEL_ID,
+      blacklistLogChannelId: data.blacklistLogChannelId ?? DEFAULT_BLACKLIST_LOG_CHANNEL_ID,
       hierarchySeeded: data.hierarchySeeded ?? false
     };
   }
@@ -494,11 +992,48 @@ export class FirestoreDragonsStore implements DragonsStore {
       guildId: data.guildId,
       recruitUserId: data.recruitUserId,
       recruiterUserId: data.recruiterUserId,
+      kind: data.kind ?? "standard",
       status: data.status,
       approvalMessageId: data.approvalMessageId,
       approvedByUserId: data.approvedByUserId,
       createdAt: data.createdAt,
       approvedAt: data.approvedAt
+    };
+  }
+
+  private mapMemberEntry(data: MemberEntryDocument): MemberEntry {
+    return {
+      guildId: data.guildId,
+      userId: data.userId,
+      status: data.status,
+      joinedAt: data.joinedAt,
+      verificationChannelId: data.verificationChannelId ?? null,
+      verificationMessageId: data.verificationMessageId ?? null,
+      verifiedByUserId: data.verifiedByUserId ?? null,
+      verifiedAt: data.verifiedAt ?? null,
+      recruiterUserId: data.recruiterUserId ?? null,
+      creditedAt: data.creditedAt ?? null,
+      leftAt: data.leftAt ?? null,
+      recruitmentId: data.recruitmentId ?? null,
+      updatedAt: data.updatedAt
+    };
+  }
+
+  private mapMemberActionJob(data: MemberActionJobDocument): MemberActionJob {
+    return {
+      id: data.id,
+      type: data.type,
+      status: data.status,
+      guildId: data.guildId,
+      userId: data.userId,
+      requestedByUserId: data.requestedByUserId,
+      recruitmentId: data.recruitmentId ?? null,
+      attempts: data.attempts,
+      createdAt: data.createdAt,
+      startedAt: data.startedAt ?? null,
+      finishedAt: data.finishedAt ?? null,
+      error: data.error ?? null,
+      updatedAt: data.updatedAt
     };
   }
 
@@ -551,6 +1086,14 @@ export class FirestoreDragonsStore implements DragonsStore {
     return this.db.collection("members").doc(`${guildId}_${userId}`);
   }
 
+  private memberEntryRef(guildId: string, userId: string) {
+    return this.db.collection("memberEntries").doc(`${guildId}_${userId}`);
+  }
+
+  private memberActionJobRef(id: string) {
+    return this.db.collection("memberActionJobs").doc(id);
+  }
+
   private hierarchyRoleRef(guildId: string, order: number) {
     return this.db.collection("hierarchyRoles").doc(`${guildId}_${order}`);
   }
@@ -561,5 +1104,50 @@ export class FirestoreDragonsStore implements DragonsStore {
 
   private counterRef(name: string) {
     return this.db.collection("counters").doc(name);
+  }
+
+  private memberActionJobId(input: EnqueueMemberActionJobInput) {
+    if (input.type === "approve_recruitment") {
+      if (input.recruitmentId === null || input.recruitmentId === undefined) {
+        throw new Error("approve_recruitment requer recruitmentId.");
+      }
+      return `approve_recruitment_${input.recruitmentId}`;
+    }
+
+    return `verify_member_${input.guildId}_${input.userId}`;
+  }
+
+  private async updateMemberEntry(
+    guildId: string,
+    userId: string,
+    update: Partial<MemberEntryDocument>
+  ): Promise<MemberEntry | null> {
+    const ref = this.memberEntryRef(guildId, userId);
+    const snapshot = await ref.get();
+    if (!snapshot.exists) {
+      return null;
+    }
+
+    const updated: MemberEntryDocument = {
+      ...(snapshot.data() as MemberEntryDocument),
+      ...update,
+      updatedAt: new Date().toISOString()
+    };
+    await ref.set(updated, { merge: true });
+    return this.mapMemberEntry(updated);
+  }
+
+  private async updateMemberActionJobStatus(
+    id: string,
+    status: MemberActionJobStatus,
+    error: string | null
+  ): Promise<void> {
+    const now = new Date().toISOString();
+    await this.memberActionJobRef(id).set({
+      status,
+      finishedAt: status === "completed" || status === "failed" || status === "cancelled" ? now : null,
+      error,
+      updatedAt: now
+    }, { merge: true });
   }
 }

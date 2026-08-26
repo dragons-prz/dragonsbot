@@ -87,6 +87,7 @@ Configura um canal usado pelo bot. Apenas administradores podem usar.
 ```text
 /config set-channel tipo:approval channel:#canal-de-aprovacoes
 /config set-channel tipo:recruitment channel:#recrutamentos
+/config set-channel tipo:blacklist channel:#blacklist-logs
 ```
 
 O fluxo atual envia a aprovacao por DM para todos os membros com cargo `founder`, entao este canal nao e obrigatorio para recrutar.
@@ -95,6 +96,24 @@ O canal `recruitment` recebe o anuncio quando um recrutamento for aprovado. Se n
 
 ```text
 1522080152094249140
+```
+
+Novos membros entram na fila de verificacao no canal:
+
+```text
+1534723901421256784
+```
+
+Saidas de membros sao registradas no canal:
+
+```text
+1534735482460831884
+```
+
+Logs de blacklist (adicoes/remocoes) vao para o canal `blacklist`. Se nao for configurado manualmente, o default e:
+
+```text
+1541992716496273478
 ```
 
 ### `/config show`
@@ -109,9 +128,18 @@ Regras:
 
 - quem usa o comando precisa ter o cargo `recruiter`
 - o usuario precisa estar no servidor
-- o usuario nao pode ja ter o cargo `member`
+- o usuario nao pode estar na blacklist
 - nao pode existir outro recrutamento pendente para o mesmo usuario
 - precisa existir pelo menos um Founder com DM aberta para receber a aprovacao
+
+Se o usuario ainda nao tem o cargo `member`, o fluxo e o recrutamento normal.
+
+Se o usuario ja tem o cargo `member`, o comando vira um pedido de credito de recrutamento. Esse pedido so e aceito quando:
+
+- o bot registrou a entrada do membro
+- a entrada aconteceu ha no maximo 24 horas
+- o membro ainda nao possui recrutador creditado
+- nao existe outro recrutamento ou credito pendente
 
 Quando criado com sucesso, o bot envia uma DM para todos os Founders com:
 
@@ -121,6 +149,76 @@ Quando criado com sucesso, o bot envia uma DM para todos os Founders com:
 - instrucao para adicionar o usuario na familia do servidor da Pureza
 - botao `Adicionei na familia`
 
+Para credito posterior, a DM informa que o membro ja foi verificado e mostra o botao `Aprovar credito`.
+
+### `/verificar usuario:<membro>`
+
+Verifica um novo membro diretamente. Este comando e usado por Founders e nao cria ficha pendente, nao envia DM de aprovacao e nao adiciona pontos para ninguem.
+
+Regras:
+
+- quem usa o comando precisa ter o cargo `founder`
+- o usuario precisa estar no servidor
+- o usuario nao pode ja ter o cargo `member`
+- o usuario nao pode estar na blacklist
+- se houver recrutamento pendente para o mesmo usuario, a verificacao direta e bloqueada
+
+Quando executado com sucesso, o bot aplica o cargo `member`, garante o perfil do membro no Firestore e aplica o rank base configurado na hierarquia.
+
+Se existir recrutamento pendente para o usuario, a verificacao direta e bloqueada para preservar o fluxo de pontos do recrutador.
+
+## Fila de verificacao
+
+Quando um membro entra no servidor, o bot envia um card no canal `1534723901421256784` com:
+
+- mencao ao cargo `founder` configurado
+- foto/avatar
+- nome e mencao
+- ID copiavel
+- data/hora de entrada
+- botao `Verificar`
+
+O botao so pode ser usado por Founders. Ao clicar, o bot coloca a verificacao na fila, muda o card para `Verificacao enfileirada` e responde rapidamente. Um worker interno processa a fila em seguida, aplica os cargos corretos, marca a entrada como verificada diretamente e desativa o botao.
+
+Se um recrutador usar `/recrutar` antes da verificacao direta, o card vira `Recrutamento pendente` e o botao de verificacao direta e desativado.
+
+Se um recrutador usar `/recrutar` depois da verificacao direta, dentro de 24 horas da entrada, o card vira `Credito de recrutamento pendente`. Quando um Founder aprovar, o recrutador recebe pontos e o card vira `Credito de recrutamento aprovado`.
+
+## Saidas
+
+Quando um membro sai do servidor, o bot envia um card no canal `1534735482460831884` com:
+
+- foto/avatar
+- nome e mencao
+- ID copiavel
+- data/hora da saida
+- entrada registrada, quando existir
+- status conhecido da entrada
+- recrutador creditado, quando existir
+- recrutamento pendente, quando existir
+- cargos conhecidos no momento do evento
+
+O Discord nao informa pelo evento se a pessoa saiu sozinha, foi expulsa ou banida.
+
+## Fila assincrona
+
+As acoes que mexem em cargos e pontos sao processadas pela colecao `memberActionJobs` no Firestore. O bot usa essa colecao como uma fila interna e processa um job por vez.
+
+Tipos de job:
+
+- `verify_member`: usado pelo botao `Verificar` e pelo comando `/verificar`
+- `approve_recruitment`: usado pelo botao `Adicionei na familia` e pelo botao `Aprovar credito`
+
+Status de job:
+
+- `pending`
+- `processing`
+- `completed`
+- `failed`
+- `cancelled`
+
+Se o bot reiniciar durante um job, jobs travados em `processing` voltam para `pending` automaticamente depois de alguns minutos.
+
 ### `/pontos`
 
 Mostra sua pontuacao atual e a quantidade de recrutamentos aprovados feitos por voce. A resposta e privada.
@@ -128,6 +226,29 @@ Mostra sua pontuacao atual e a quantidade de recrutamentos aprovados feitos por 
 ### `/ranking limite:<numero>`
 
 Mostra o ranking de membros do servidor, ordenado por pontos e depois por recrutamentos aprovados. O limite e opcional, com padrao 10 e maximo 25. A resposta e privada.
+
+### `/painel`
+
+Cria paineis informativos: uma mensagem com titulo, descricao, imagem opcional e ate 25 botoes, organizados em linhas de 5. Ao clicar em um botao, o usuario recebe uma resposta privada (visivel so para ele) com o texto configurado para aquele botao. Apenas administradores podem usar. Subcomandos:
+
+- `criar id:<texto> titulo:<texto> descricao:<texto>` - cria um painel novo (id e usado internamente, deve ser unico no servidor).
+- `set-imagem id:<texto> imagem:<anexo>` - define/atualiza a imagem do painel.
+- `add-botao id:<texto> label:<texto> resposta:<texto> estilo:<opcional> emoji:<opcional>` - adiciona um botao. `estilo` pode ser Cinza (padrao), Azul, Verde ou Vermelho.
+- `remover-botao id:<texto> botao-id:<texto>` - remove um botao pelo id gerado a partir do label.
+- `publicar id:<texto> canal:<canal>` - envia a mensagem do painel no canal indicado.
+- `listar` - lista os paineis do servidor com a quantidade de botoes de cada um.
+
+Os paineis ficam salvos na colecao `panels` do Firestore, o que permite reconfigurar sem reiniciar o bot e abre espaço para uma futura interface web de configuracao usar a mesma colecao.
+
+### `/blacklist`
+
+Gerencia a lista de usuarios que nunca podem ser verificados ou recrutados. Apenas quem tem o cargo `founder` pode usar. Subcomandos:
+
+- `add usuario:<membro> motivo:<texto>` - adiciona o usuario na blacklist. Founders nao podem ser adicionados (o comando bloqueia essa tentativa).
+- `remove usuario:<membro>` - remove o usuario da blacklist.
+- `listar` - lista os usuarios atualmente na blacklist com o motivo e quem adicionou.
+
+Enquanto um usuario estiver na blacklist, `/recrutar`, `/verificar` e o botao `Verificar` do card de entrada ficam bloqueados para ele, mostrando o motivo do bloqueio. Toda adicao/remocao gera um log com foto do usuario, motivo e responsavel no canal `blacklist` (veja `/config set-channel`). Os registros ficam na colecao `blacklist` do Firestore.
 
 ## Aprovacao
 
@@ -144,6 +265,8 @@ Ao aprovar:
 - quando houver promocao, o recrutador recebe uma DM informando o novo cargo
 - as DMs enviadas aos Founders sao atualizadas para mostrar a aprovacao
 - o botao e desativado para evitar pontos duplicados
+
+Em pedidos de credito posterior, o membro ja possui os cargos. Nesse caso a aprovacao apenas soma os pontos ao recrutador, marca a entrada como creditada e atualiza o card de verificacao.
 
 ## Hierarquia
 
@@ -176,6 +299,10 @@ Colecoes usadas no Firestore:
 - `hierarchyRoles`
 - `counters`
 - subcolecao `recruitments/{id}/approvalMessages`
+- `memberEntries`
+- `memberActionJobs`
+- `panels`
+- `blacklist`
 
 Se ja houver dados antigos em `recruiterPoints`/`recruiterPointEvents`, migre para a estrutura generica:
 
@@ -207,6 +334,14 @@ Eventos principais:
 - `config.channel_set`
 - `points.viewed`
 - `ranking.viewed`
+- `panel.created`
+- `panel.image_set`
+- `panel.button_added`
+- `panel.button_removed`
+- `panel.published`
+- `blacklist.added`
+- `blacklist.removed`
+- `blacklist.blocked`
 
 ## Validacao
 
@@ -219,6 +354,10 @@ Checklist manual recomendado:
 - configurar cargos com `/config`
 - tentar recrutar sem cargo de recrutador e confirmar bloqueio
 - recrutar com cargo correto e confirmar DM para Founders
+- verificar com Founder e confirmar cargo de membro + rank base sem pontos para ninguem
+- confirmar que novo membro gera card no canal de verificacao
+- confirmar que `/recrutar` para membro verificado ha menos de 24h gera pedido de credito
+- confirmar que segundo pedido de credito para o mesmo membro e bloqueado
 - usar `/pontos` e confirmar a pontuacao atual
 - usar `/ranking` e confirmar a ordenacao por pontos/recrutamentos
 - tentar aprovar sem cargo Founder e confirmar bloqueio

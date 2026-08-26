@@ -21,7 +21,7 @@ se o comportamento mudar.
 
 ```
 src/
-  commands/     # comandos slash (/config, /recrutar, /pontos, /ranking) + registry
+  commands/     # comandos slash (/config, /recrutar, /verificar, /pontos, /ranking, /painel, /blacklist) + registry
   config/       # leitura/validação de variáveis de ambiente
   domain/       # tipos de domínio
   storage/      # interface DragonsStore + implementação Firestore
