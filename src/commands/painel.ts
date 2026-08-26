@@ -4,6 +4,7 @@ import {
   ButtonStyle,
   ChannelType,
   Client,
+  ColorResolvable,
   EmbedBuilder,
   MessageFlags,
   PermissionFlagsBits,
@@ -23,6 +24,8 @@ const BUTTON_STYLE_MAP: Record<PanelButtonStyle, ButtonStyle> = {
 };
 const PANEL_JOB_WORKER_INTERVAL_MS = 5000;
 const PANEL_JOB_STALE_AFTER_MS = 5 * 60 * 1000;
+const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
+const CLEAR_COLOR_KEYWORDS = new Set(["limpar", "nenhuma", "remover", "none"]);
 
 function slugify(value: string): string {
   return value
@@ -38,6 +41,9 @@ export function buildPanelMessage(panel: PanelConfig) {
   const embed = new EmbedBuilder().setTitle(panel.title).setDescription(panel.description);
   if (panel.imageUrl) {
     embed.setImage(panel.imageUrl);
+  }
+  if (panel.color) {
+    embed.setColor(panel.color as ColorResolvable);
   }
 
   const rows: ActionRowBuilder<ButtonBuilder>[] = [];
@@ -188,6 +194,9 @@ export const painelCommand: SlashCommand = {
         .addStringOption((option) => option.setName("id").setDescription("Identificador unico do painel.").setRequired(true))
         .addStringOption((option) => option.setName("titulo").setDescription("Titulo do painel.").setRequired(true))
         .addStringOption((option) => option.setName("descricao").setDescription("Descricao do painel.").setRequired(true))
+        .addStringOption((option) =>
+          option.setName("cor").setDescription("Cor lateral do embed, formato hex (ex: #E03131).")
+        )
     )
     .addSubcommand((subcommand) =>
       subcommand
@@ -195,6 +204,18 @@ export const painelCommand: SlashCommand = {
         .setDescription("Define a imagem de um painel.")
         .addStringOption((option) => option.setName("id").setDescription("Identificador do painel.").setRequired(true))
         .addAttachmentOption((option) => option.setName("imagem").setDescription("Imagem do painel.").setRequired(true))
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("set-cor")
+        .setDescription("Define a cor lateral do embed de um painel.")
+        .addStringOption((option) => option.setName("id").setDescription("Identificador do painel.").setRequired(true))
+        .addStringOption((option) =>
+          option
+            .setName("cor")
+            .setDescription("Cor em hex (ex: #E03131), ou \"limpar\" para remover.")
+            .setRequired(true)
+        )
     )
     .addSubcommand((subcommand) =>
       subcommand
@@ -217,6 +238,12 @@ export const painelCommand: SlashCommand = {
             )
         )
         .addStringOption((option) => option.setName("emoji").setDescription("Emoji exibido no botao."))
+        .addAttachmentOption((option) =>
+          option.setName("resposta-imagem").setDescription("Imagem exibida na resposta do botao.")
+        )
+        .addStringOption((option) =>
+          option.setName("resposta-cor").setDescription("Cor lateral da resposta do botao, formato hex (ex: #E03131).")
+        )
     )
     .addSubcommand((subcommand) =>
       subcommand
@@ -259,13 +286,21 @@ export const painelCommand: SlashCommand = {
       const id = slugify(interaction.options.getString("id", true));
       const titulo = interaction.options.getString("titulo", true);
       const descricao = interaction.options.getString("descricao", true);
+      const cor = interaction.options.getString("cor");
       if (!id) {
         await interaction.reply({ content: "Id invalido. Use letras, numeros ou hifen.", flags: MessageFlags.Ephemeral });
+        return;
+      }
+      if (cor && !HEX_COLOR_REGEX.test(cor)) {
+        await interaction.reply({ content: "Cor invalida. Use o formato hex, ex: `#E03131`.", flags: MessageFlags.Ephemeral });
         return;
       }
 
       try {
         await store.createPanel(guildId, id, titulo, descricao);
+        if (cor) {
+          await store.setPanelColor(guildId, id, cor);
+        }
         logger.info("panel.created", { guildId, panelId: id, adminUserId: member.id });
         await interaction.reply({ content: `Painel \`${id}\` criado. Use \`/painel add-botao\` para adicionar botoes.`, flags: MessageFlags.Ephemeral });
       } catch (error) {
@@ -287,13 +322,47 @@ export const painelCommand: SlashCommand = {
       return;
     }
 
+    if (subcommand === "set-cor") {
+      const id = interaction.options.getString("id", true);
+      const corInput = interaction.options.getString("cor", true);
+      const shouldClear = CLEAR_COLOR_KEYWORDS.has(corInput.trim().toLowerCase());
+      if (!shouldClear && !HEX_COLOR_REGEX.test(corInput)) {
+        await interaction.reply({
+          content: "Cor invalida. Use o formato hex, ex: `#E03131`, ou `limpar` para remover.",
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      try {
+        await store.setPanelColor(guildId, id, shouldClear ? null : corInput);
+        logger.info("panel.color_set", { guildId, panelId: id, adminUserId: member.id, color: shouldClear ? null : corInput });
+        await interaction.reply({
+          content: shouldClear
+            ? `Cor do painel \`${id}\` removida.`
+            : `Cor do painel \`${id}\` atualizada.`,
+          flags: MessageFlags.Ephemeral
+        });
+      } catch (error) {
+        await interaction.reply({ content: (error as Error).message, flags: MessageFlags.Ephemeral });
+      }
+      return;
+    }
+
     if (subcommand === "add-botao") {
       const id = interaction.options.getString("id", true);
       const label = interaction.options.getString("label", true);
       const resposta = interaction.options.getString("resposta", true);
       const estilo = (interaction.options.getString("estilo") ?? "Secondary") as PanelButtonStyle;
       const emoji = interaction.options.getString("emoji");
+      const respostaImagem = interaction.options.getAttachment("resposta-imagem");
+      const respostaCor = interaction.options.getString("resposta-cor");
       const buttonId = slugify(label);
+
+      if (respostaCor && !HEX_COLOR_REGEX.test(respostaCor)) {
+        await interaction.reply({ content: "Cor da resposta invalida. Use o formato hex, ex: `#E03131`.", flags: MessageFlags.Ephemeral });
+        return;
+      }
 
       try {
         await store.addPanelButton(guildId, id, {
@@ -301,7 +370,9 @@ export const painelCommand: SlashCommand = {
           label,
           response: resposta,
           style: estilo,
-          emoji: emoji ?? null
+          emoji: emoji ?? null,
+          responseImageUrl: respostaImagem?.url ?? null,
+          responseColor: respostaCor ?? null
         });
         logger.info("panel.button_added", { guildId, panelId: id, buttonId, adminUserId: member.id });
         await interaction.reply({ content: `Botao \`${buttonId}\` adicionado ao painel \`${id}\`.`, flags: MessageFlags.Ephemeral });
@@ -399,6 +470,14 @@ export const panelButtonHandler: ButtonHandler = {
       return;
     }
 
-    await interaction.reply({ content: button.response, flags: MessageFlags.Ephemeral });
+    const responseEmbed = new EmbedBuilder().setDescription(button.response);
+    if (button.responseImageUrl) {
+      responseEmbed.setImage(button.responseImageUrl);
+    }
+    if (button.responseColor) {
+      responseEmbed.setColor(button.responseColor as ColorResolvable);
+    }
+
+    await interaction.reply({ embeds: [responseEmbed], flags: MessageFlags.Ephemeral });
   }
 };
