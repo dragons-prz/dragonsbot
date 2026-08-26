@@ -8,6 +8,7 @@ import {
 import { loadEnv } from "./config/env";
 import { buttonHandlers, commands } from "./commands";
 import { announceMemberExit, announceNewMember, startMemberActionJobWorker } from "./commands/recrutar";
+import { startPanelJobWorker } from "./commands/painel";
 import { SlashCommand } from "./commands/types";
 import { createStore } from "./storage/createStore";
 import { safeReply } from "./utils/discord";
@@ -27,6 +28,7 @@ async function main(): Promise<void> {
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
   });
   let stopMemberActionJobWorker: () => void = () => undefined;
+  let stopPanelJobWorker: () => void = () => undefined;
 
   client.once(Events.ClientReady, (readyClient) => {
     logger.info("bot.ready", {
@@ -34,6 +36,7 @@ async function main(): Promise<void> {
       tag: readyClient.user.tag
     });
     stopMemberActionJobWorker = startMemberActionJobWorker(client, store);
+    stopPanelJobWorker = startPanelJobWorker(client, store);
   });
 
   client.on(Events.GuildMemberAdd, async (member) => {
@@ -146,6 +149,7 @@ async function main(): Promise<void> {
   const shutdown = async () => {
     logger.info("bot.shutdown");
     stopMemberActionJobWorker();
+    stopPanelJobWorker();
     client.destroy();
     await store.close();
     process.exit(0);

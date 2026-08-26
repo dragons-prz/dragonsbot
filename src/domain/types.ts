@@ -192,4 +192,22 @@ export interface PanelConfig {
   buttons: PanelButtonConfig[];
   createdAt: string;
   updatedAt: string;
+  publishedChannelId?: string | null;
+  publishedMessageId?: string | null;
+}
+
+export type PanelJobStatus = "pending" | "processing" | "completed" | "failed";
+
+export interface PanelJob {
+  id: string;
+  guildId: string;
+  panelId: string;
+  channelId: string;
+  requestedByUserId: string;
+  status: PanelJobStatus;
+  messageId: string | null;
+  attempts: number;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
 }

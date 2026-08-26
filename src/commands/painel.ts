@@ -3,12 +3,13 @@ import {
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
+  Client,
   EmbedBuilder,
   MessageFlags,
   PermissionFlagsBits,
   SlashCommandBuilder
 } from "discord.js";
-import { PanelButtonStyle, PanelConfig } from "../domain/types";
+import { PanelButtonStyle, PanelConfig, PanelJob } from "../domain/types";
 import { memberIsAdmin, requireGuildMember } from "../utils/discord";
 import { logger } from "../utils/logger";
 import { ButtonHandler, SlashCommand } from "./types";
@@ -20,6 +21,8 @@ const BUTTON_STYLE_MAP: Record<PanelButtonStyle, ButtonStyle> = {
   Success: ButtonStyle.Success,
   Danger: ButtonStyle.Danger
 };
+const PANEL_JOB_WORKER_INTERVAL_MS = 5000;
+const PANEL_JOB_STALE_AFTER_MS = 5 * 60 * 1000;
 
 function slugify(value: string): string {
   return value
@@ -31,7 +34,7 @@ function slugify(value: string): string {
     .slice(0, 40);
 }
 
-function buildPanelMessage(panel: PanelConfig) {
+export function buildPanelMessage(panel: PanelConfig) {
   const embed = new EmbedBuilder().setTitle(panel.title).setDescription(panel.description);
   if (panel.imageUrl) {
     embed.setImage(panel.imageUrl);
@@ -56,6 +59,121 @@ function buildPanelMessage(panel: PanelConfig) {
   }
 
   return { embeds: [embed], components: rows };
+}
+
+type CommandStore = Parameters<SlashCommand["execute"]>[1]["store"];
+type PublishAction = "published" | "updated";
+
+interface PublishPanelResult {
+  action: PublishAction;
+  messageId: string;
+}
+
+async function publishPanelToChannel(
+  client: Client,
+  store: CommandStore,
+  panel: PanelConfig,
+  channelId: string
+): Promise<PublishPanelResult> {
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+  if (!channel?.isTextBased() || !("send" in channel)) {
+    throw new Error("Canal invalido ou nao encontrado.");
+  }
+
+  const payload = buildPanelMessage(panel);
+
+  if (panel.publishedMessageId && panel.publishedChannelId === channelId) {
+    const existingMessage = await channel.messages.fetch(panel.publishedMessageId).catch(() => null);
+    if (existingMessage) {
+      await existingMessage.edit(payload);
+      await store.setPanelPublishedMessage(panel.guildId, panel.id, channelId, existingMessage.id);
+      return { action: "updated", messageId: existingMessage.id };
+    }
+    logger.warn("panel.published_message_missing", {
+      guildId: panel.guildId,
+      panelId: panel.id,
+      channelId,
+      previousMessageId: panel.publishedMessageId
+    });
+  }
+
+  const sentMessage = await channel.send(payload);
+  await store.setPanelPublishedMessage(panel.guildId, panel.id, channelId, sentMessage.id);
+  return { action: "published", messageId: sentMessage.id };
+}
+
+async function processPanelJob(client: Client, store: CommandStore, job: PanelJob): Promise<void> {
+  const panel = await store.getPanel(job.guildId, job.panelId);
+  if (!panel) {
+    throw new Error(`Painel "${job.panelId}" nao encontrado.`);
+  }
+
+  const result = await publishPanelToChannel(client, store, panel, job.channelId);
+  await store.completePanelJob(job.id, result.messageId);
+
+  logger.info(result.action === "updated" ? "panel_job.updated" : "panel_job.published", {
+    jobId: job.id,
+    guildId: job.guildId,
+    panelId: job.panelId,
+    channelId: job.channelId,
+    messageId: result.messageId,
+    requestedByUserId: job.requestedByUserId
+  });
+}
+
+export function startPanelJobWorker(client: Client, store: CommandStore): () => void {
+  let running = false;
+
+  const tick = async () => {
+    if (running) {
+      return;
+    }
+
+    running = true;
+    try {
+      const resetCount = await store.resetStalePanelJobs(PANEL_JOB_STALE_AFTER_MS);
+      if (resetCount > 0) {
+        logger.warn("panel_job.stale_reset", { resetCount });
+      }
+
+      while (true) {
+        const job = await store.claimNextPendingPanelJob();
+        if (!job) {
+          break;
+        }
+
+        logger.info("panel_job.claimed", {
+          jobId: job.id,
+          guildId: job.guildId,
+          panelId: job.panelId,
+          channelId: job.channelId,
+          requestedByUserId: job.requestedByUserId,
+          attempts: job.attempts
+        });
+
+        try {
+          await processPanelJob(client, store, job);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          logger.error("panel_job.failed", error, {
+            jobId: job.id,
+            guildId: job.guildId,
+            panelId: job.panelId,
+            channelId: job.channelId
+          });
+          await store.failPanelJob(job.id, message);
+        }
+      }
+    } catch (error) {
+      logger.error("panel_job.worker_failed", error);
+    } finally {
+      running = false;
+    }
+  };
+
+  const interval = setInterval(tick, PANEL_JOB_WORKER_INTERVAL_MS);
+  void tick();
+  return () => clearInterval(interval);
 }
 
 export const painelCommand: SlashCommand = {
@@ -225,9 +343,26 @@ export const painelCommand: SlashCommand = {
         return;
       }
 
-      await target.send(buildPanelMessage(panel));
-      logger.info("panel.published", { guildId, panelId: id, channelId: channel.id, adminUserId: member.id });
-      await interaction.reply({ content: `Painel \`${id}\` publicado em <#${channel.id}>.`, flags: MessageFlags.Ephemeral });
+      try {
+        const result = await publishPanelToChannel(interaction.client, store, panel, channel.id);
+        logger.info(result.action === "updated" ? "panel_job.updated" : "panel_job.published", {
+          guildId,
+          panelId: id,
+          channelId: channel.id,
+          messageId: result.messageId,
+          adminUserId: member.id,
+          source: "command"
+        });
+        await interaction.reply({
+          content: result.action === "updated"
+            ? `Painel \`${id}\` atualizado em <#${channel.id}>.`
+            : `Painel \`${id}\` publicado em <#${channel.id}>.`,
+          flags: MessageFlags.Ephemeral
+        });
+      } catch (error) {
+        logger.error("panel_job.failed", error, { guildId, panelId: id, channelId: channel.id, source: "command" });
+        await interaction.reply({ content: (error as Error).message, flags: MessageFlags.Ephemeral });
+      }
       return;
     }
 
