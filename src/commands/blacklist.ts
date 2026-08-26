@@ -1,8 +1,32 @@
-import { EmbedBuilder, MessageFlags, SlashCommandBuilder } from "discord.js";
+import { EmbedBuilder, Guild, MessageFlags, SlashCommandBuilder } from "discord.js";
 import { memberHasRole, requireGuildMember } from "../utils/discord";
 import { isSendableTextChannel } from "../utils/discord";
 import { logger } from "../utils/logger";
 import { SlashCommand } from "./types";
+
+async function sendBlacklistLog(
+  guild: Guild,
+  channelId: string,
+  embed: EmbedBuilder,
+  context: { guildId: string; targetUserId: string; action: "added" | "removed" }
+): Promise<void> {
+  const logChannel = guild.channels.cache.get(channelId);
+  if (!logChannel || !isSendableTextChannel(logChannel)) {
+    logger.warn("blacklist.log_skipped", { reason: "channel_not_found", channelId, ...context });
+    return;
+  }
+
+  try {
+    await logChannel.send({ embeds: [embed] });
+  } catch (error) {
+    logger.warn("blacklist.log_skipped", {
+      reason: "send_failed",
+      channelId,
+      error: error instanceof Error ? error.message : String(error),
+      ...context
+    });
+  }
+}
 
 export const blacklistCommand: SlashCommand = {
   data: new SlashCommandBuilder()
@@ -78,20 +102,21 @@ export const blacklistCommand: SlashCommand = {
         reason
       });
 
-      const logChannel = interaction.guild?.channels.cache.get(config.blacklistLogChannelId);
-      if (logChannel && isSendableTextChannel(logChannel)) {
-        const embed = new EmbedBuilder()
-          .setTitle("Membro adicionado a blacklist")
-          .setColor(0xc92a2a)
-          .setThumbnail(targetUser.displayAvatarURL())
-          .addFields(
-            { name: "Usuario", value: `<@${targetUser.id}> (\`${targetUser.id}\`)` },
-            { name: "Motivo", value: reason },
-            { name: "Adicionado por", value: `<@${founder.id}>` }
-          )
-          .setTimestamp(new Date());
-        await logChannel.send({ embeds: [embed] });
-      }
+      const addedEmbed = new EmbedBuilder()
+        .setTitle("Membro adicionado a blacklist")
+        .setColor(0xc92a2a)
+        .setThumbnail(targetUser.displayAvatarURL())
+        .addFields(
+          { name: "Usuario", value: `<@${targetUser.id}> (\`${targetUser.id}\`)` },
+          { name: "Motivo", value: reason },
+          { name: "Adicionado por", value: `<@${founder.id}>` }
+        )
+        .setTimestamp(new Date());
+      await sendBlacklistLog(interaction.guild!, config.blacklistLogChannelId, addedEmbed, {
+        guildId,
+        targetUserId: targetUser.id,
+        action: "added"
+      });
 
       await interaction.reply({ content: `<@${targetUser.id}> foi adicionado a blacklist.`, flags: MessageFlags.Ephemeral });
       return;
@@ -113,19 +138,20 @@ export const blacklistCommand: SlashCommand = {
         targetUserTag: targetUser.tag
       });
 
-      const logChannel = interaction.guild?.channels.cache.get(config.blacklistLogChannelId);
-      if (logChannel && isSendableTextChannel(logChannel)) {
-        const embed = new EmbedBuilder()
-          .setTitle("Membro removido da blacklist")
-          .setColor(0x2f9e44)
-          .setThumbnail(targetUser.displayAvatarURL())
-          .addFields(
-            { name: "Usuario", value: `<@${targetUser.id}> (\`${targetUser.id}\`)` },
-            { name: "Removido por", value: `<@${founder.id}>` }
-          )
-          .setTimestamp(new Date());
-        await logChannel.send({ embeds: [embed] });
-      }
+      const removedEmbed = new EmbedBuilder()
+        .setTitle("Membro removido da blacklist")
+        .setColor(0x2f9e44)
+        .setThumbnail(targetUser.displayAvatarURL())
+        .addFields(
+          { name: "Usuario", value: `<@${targetUser.id}> (\`${targetUser.id}\`)` },
+          { name: "Removido por", value: `<@${founder.id}>` }
+        )
+        .setTimestamp(new Date());
+      await sendBlacklistLog(interaction.guild!, config.blacklistLogChannelId, removedEmbed, {
+        guildId,
+        targetUserId: targetUser.id,
+        action: "removed"
+      });
 
       await interaction.reply({ content: `<@${targetUser.id}> foi removido da blacklist.`, flags: MessageFlags.Ephemeral });
       return;
