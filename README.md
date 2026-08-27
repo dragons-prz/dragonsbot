@@ -374,6 +374,7 @@ Eventos principais:
 - `blacklist.added`
 - `blacklist.removed`
 - `blacklist.blocked`
+- `firestore.usage` (agregado a cada 5min: `reads`/`writes`/`totalCalls` + `byMethod`)
 
 ## Observabilidade (New Relic APM)
 
@@ -390,11 +391,22 @@ Variaveis (ver `.env.example`):
 | `NEW_RELIC_APP_NAME` | Nome da app no New Relic (`dragonsbot`). |
 | `NEW_RELIC_LOG` / `NEW_RELIC_LOG_LEVEL` | Destino (`stdout`) e nivel do log do agente. |
 | `NEW_RELIC_LOG_FORWARDING` | `false` para nao encaminhar logs da app (economiza o teto de ingest do plano free). |
+| `FIRESTORE_USAGE_LOG` | `false` para desligar o log agregado `firestore.usage` (independente do New Relic). |
 
 O bot nao e servidor HTTP, entao a auto-instrumentacao nao gera "transactions"
-sozinha — o que vem de graca e runtime/GC, erros e chamadas externas. Timing e
-throughput dos workers exigem envolver `drainOne` em
-`newrelic.startBackgroundTransaction(...)` (follow-up).
+sozinha. O que existe:
+
+- **Background transactions** manuais: cada slash command
+  (`OtherTransaction/command/<nome>`), clique de botao
+  (`OtherTransaction/button/<prefixo>`) e job
+  (`OtherTransaction/job/panel_job`, `.../member_action_job/<tipo>`).
+- **Camada de dados** (`src/storage/instrumentedStore.ts`): um `Proxy` sobre o
+  `DragonsStore` cria um segmento `Datastore/statement/Firestore/<metodo>` por
+  chamada (aparece no trace de cada transacao e, parcialmente, na aba
+  Databases), emite metricas `Custom/Firestore/*` e loga um agregado
+  `firestore.usage` a cada 5min com contagem/latencia por metodo — sinal de
+  volume que **nao depende do New Relic nem do plano do Firebase**.
+- De graca do agente: runtime/GC, erros e chamadas externas (Discord API).
 
 ## Validacao
 

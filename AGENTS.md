@@ -58,12 +58,21 @@ Sempre rode `npm run build` antes de reportar uma mudança como concluída.
   Firestore — não é possível testar o fluxo fim a fim localmente sem essas
   credenciais. Reporte testes de integração como não executados quando faltar
   isso, em vez de assumir que passariam.
-- Observabilidade: o agente APM do New Relic é carregado no 1º import de
-  `src/index.ts` e configurado por `newrelic.js` (só lê env, sem segredo).
-  Vars: `NEW_RELIC_LICENSE_KEY` (secret — só no `.env` da VPS, nunca no
-  Dockerfile/imagem/git), `NEW_RELIC_APP_NAME`, `NEW_RELIC_LOG`,
-  `NEW_RELIC_LOG_LEVEL`, `NEW_RELIC_LOG_FORWARDING`. Sem `NEW_RELIC_LICENSE_KEY`
-  o agente fica desativado (`agent_enabled`), então dev e CI rodam sem ele.
+- Observabilidade (ver README "Observabilidade"): o agente APM do New Relic é
+  carregado no 1º import de `src/index.ts` e configurado por `newrelic.js` (só
+  lê env, sem segredo). Comandos, botões e jobs são envoltos em background
+  transactions manuais; `src/storage/instrumentedStore.ts` é um `Proxy` sobre o
+  `DragonsStore` que gera segmento/métrica por chamada e o log agregado
+  `firestore.usage`. Vars: `NEW_RELIC_LICENSE_KEY` (secret — só no `.env` da
+  VPS, nunca no Dockerfile/imagem/git), `NEW_RELIC_APP_NAME`, `NEW_RELIC_LOG`,
+  `NEW_RELIC_LOG_LEVEL`, `NEW_RELIC_LOG_FORWARDING`, `FIRESTORE_USAGE_LOG`. Sem
+  `NEW_RELIC_LICENSE_KEY` o agente fica desativado (`agent_enabled`), então dev
+  e CI rodam sem ele.
+- Ao adicionar método novo ao `DragonsStore`: se o nome não começar com um
+  prefixo de escrita conhecido (`set`/`create`/`update`/`add`/`remove`/
+  `delete`/`mark`/`enqueue`/`complete`/`fail`/`cancel`/`approve`/`seed`/
+  `claim`/`reset`), o `instrumentedStore` conta como leitura — ajuste
+  `WRITE_PREFIXES` lá se precisar.
 - Docker: `Dockerfile` faz build multi-stage; `docker-compose.yml` espera
   `.env` e um `firebase-service-account.json` montado como volume read-only.
 
