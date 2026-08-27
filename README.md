@@ -375,6 +375,27 @@ Eventos principais:
 - `blacklist.removed`
 - `blacklist.blocked`
 
+## Observabilidade (New Relic APM)
+
+O agente do New Relic e carregado no primeiro `import` de `src/index.ts` e
+configurado por `newrelic.js` (le so variavel de ambiente, sem segredo no
+arquivo). Sem `NEW_RELIC_LICENSE_KEY` o agente fica desativado — dev, `npm start`
+local e CI rodam normalmente sem ele.
+
+Variaveis (ver `.env.example`):
+
+| Var | |
+| --- | --- |
+| `NEW_RELIC_LICENSE_KEY` | Secret. So no `.env` da VPS (o `docker-compose` carrega via `env_file`). Nunca no Dockerfile, na imagem ou no git. |
+| `NEW_RELIC_APP_NAME` | Nome da app no New Relic (`dragonsbot`). |
+| `NEW_RELIC_LOG` / `NEW_RELIC_LOG_LEVEL` | Destino (`stdout`) e nivel do log do agente. |
+| `NEW_RELIC_LOG_FORWARDING` | `false` para nao encaminhar logs da app (economiza o teto de ingest do plano free). |
+
+O bot nao e servidor HTTP, entao a auto-instrumentacao nao gera "transactions"
+sozinha — o que vem de graca e runtime/GC, erros e chamadas externas. Timing e
+throughput dos workers exigem envolver `drainOne` em
+`newrelic.startBackgroundTransaction(...)` (follow-up).
+
 ## Validacao
 
 ```bash

@@ -1,3 +1,7 @@
+// Precisa ser o primeiro import do processo: o agente instrumenta os modulos
+// conforme sao carregados. Sem NEW_RELIC_LICENSE_KEY ele se desliga sozinho
+// (ver newrelic.js), entao e inofensivo em dev/CI.
+import "newrelic";
 import {
   Client,
   Collection,
