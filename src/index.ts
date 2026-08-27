@@ -1,7 +1,8 @@
 // Precisa ser o primeiro import do processo: o agente instrumenta os modulos
-// conforme sao carregados. Sem NEW_RELIC_LICENSE_KEY ele se desliga sozinho
-// (ver newrelic.js), entao e inofensivo em dev/CI.
-import "newrelic";
+// conforme sao carregados (o `require` acontece nesta linha, qualquer que seja
+// a forma do import). Sem NEW_RELIC_LICENSE_KEY ele se desliga sozinho (ver
+// newrelic.js), entao e inofensivo em dev/CI.
+import { startBackgroundTransaction } from "newrelic";
 import {
   Client,
   Collection,
@@ -91,13 +92,15 @@ async function main(): Promise<void> {
           return;
         }
 
-        await command.execute(interaction, { store });
-        logger.info("interaction.command.completed", {
-          commandName: interaction.commandName,
-          interactionId: interaction.id,
-          guildId: interaction.guildId,
-          userId: interaction.user.id,
-          durationMs: Date.now() - startedAt
+        await startBackgroundTransaction(interaction.commandName, "command", async () => {
+          await command.execute(interaction, { store });
+          logger.info("interaction.command.completed", {
+            commandName: interaction.commandName,
+            interactionId: interaction.id,
+            guildId: interaction.guildId,
+            userId: interaction.user.id,
+            durationMs: Date.now() - startedAt
+          });
         });
         return;
       }
@@ -123,13 +126,18 @@ async function main(): Promise<void> {
           return;
         }
 
-        await handler.execute(interaction, { store });
-        logger.info("interaction.button.completed", {
-          customId: interaction.customId,
-          interactionId: interaction.id,
-          guildId: interaction.guildId,
-          userId: interaction.user.id,
-          durationMs: Date.now() - startedAt
+        // Nome pelo prefixo do handler (bounded), nunca pelo customId cru
+        // (tem ID dinamico -> explode cardinalidade de transacao).
+        const txName = handler.customIdPrefix.replace(/:$/, "");
+        await startBackgroundTransaction(txName, "button", async () => {
+          await handler.execute(interaction, { store });
+          logger.info("interaction.button.completed", {
+            customId: interaction.customId,
+            interactionId: interaction.id,
+            guildId: interaction.guildId,
+            userId: interaction.user.id,
+            durationMs: Date.now() - startedAt
+          });
         });
       }
     } catch (error) {
