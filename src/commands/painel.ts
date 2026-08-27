@@ -10,6 +10,8 @@ import {
   PermissionFlagsBits,
   SlashCommandBuilder
 } from "discord.js";
+import { startBackgroundTransaction } from "newrelic";
+
 import { PanelButtonStyle, PanelConfig, PanelJob } from "../domain/types";
 import { memberIsAdmin, requireGuildMember } from "../utils/discord";
 import { startJobWorker } from "../utils/jobWorker";
@@ -134,27 +136,31 @@ export function startPanelJobWorker(client: Client, store: CommandStore): () => 
       return false;
     }
 
-    logger.info("panel_job.claimed", {
-      jobId: job.id,
-      guildId: job.guildId,
-      panelId: job.panelId,
-      channelId: job.channelId,
-      requestedByUserId: job.requestedByUserId,
-      attempts: job.attempts
-    });
-
-    try {
-      await processPanelJob(client, store, job);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error("panel_job.failed", error, {
+    // Uma background transaction por job processado (OtherTransaction/job/panel_job)
+    // — polls vazios nao geram transacao.
+    await startBackgroundTransaction("panel_job", "job", async () => {
+      logger.info("panel_job.claimed", {
         jobId: job.id,
         guildId: job.guildId,
         panelId: job.panelId,
-        channelId: job.channelId
+        channelId: job.channelId,
+        requestedByUserId: job.requestedByUserId,
+        attempts: job.attempts
       });
-      await store.failPanelJob(job.id, message);
-    }
+
+      try {
+        await processPanelJob(client, store, job);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error("panel_job.failed", error, {
+          jobId: job.id,
+          guildId: job.guildId,
+          panelId: job.panelId,
+          channelId: job.channelId
+        });
+        await store.failPanelJob(job.id, message);
+      }
+    });
 
     return true;
   };

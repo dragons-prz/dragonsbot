@@ -1,3 +1,5 @@
+import { startBackgroundTransaction } from "newrelic";
+
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -830,25 +832,29 @@ export function startMemberActionJobWorker(client: Client, store: CommandStore) 
       return false;
     }
 
-    try {
-      await processMemberActionJob(client, store, job);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error("member_action_job.failed", error, {
-        jobId: job.id,
-        type: job.type,
-        guildId: job.guildId,
-        userId: job.userId,
-        recruitmentId: job.recruitmentId
-      });
-      await store.failMemberActionJob(job.id, message);
-      await restoreMemberActionJobUiOnFailure(client, store, job, message).catch((restoreError) => {
-        logger.error("member_action_job.restore_ui_failed", restoreError, {
+    // Uma background transaction por job, nomeada pelo tipo
+    // (OtherTransaction/member_action_job/verify_member | approve_recruitment).
+    await startBackgroundTransaction(job.type, "member_action_job", async () => {
+      try {
+        await processMemberActionJob(client, store, job);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error("member_action_job.failed", error, {
           jobId: job.id,
-          type: job.type
+          type: job.type,
+          guildId: job.guildId,
+          userId: job.userId,
+          recruitmentId: job.recruitmentId
         });
-      });
-    }
+        await store.failMemberActionJob(job.id, message);
+        await restoreMemberActionJobUiOnFailure(client, store, job, message).catch((restoreError) => {
+          logger.error("member_action_job.restore_ui_failed", restoreError, {
+            jobId: job.id,
+            type: job.type
+          });
+        });
+      }
+    });
 
     return true;
   };
