@@ -12,6 +12,7 @@ import {
 } from "discord.js";
 import { PanelButtonStyle, PanelConfig, PanelJob } from "../domain/types";
 import { memberIsAdmin, requireGuildMember } from "../utils/discord";
+import { startJobWorker } from "../utils/jobWorker";
 import { logger } from "../utils/logger";
 import { ButtonHandler, SlashCommand } from "./types";
 
@@ -22,7 +23,6 @@ const BUTTON_STYLE_MAP: Record<PanelButtonStyle, ButtonStyle> = {
   Success: ButtonStyle.Success,
   Danger: ButtonStyle.Danger
 };
-const PANEL_JOB_WORKER_INTERVAL_MS = 5000;
 const PANEL_JOB_STALE_AFTER_MS = 5 * 60 * 1000;
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
 const CLEAR_COLOR_KEYWORDS = new Set(["limpar", "nenhuma", "remover", "none"]);
@@ -128,58 +128,43 @@ async function processPanelJob(client: Client, store: CommandStore, job: PanelJo
 }
 
 export function startPanelJobWorker(client: Client, store: CommandStore): () => void {
-  let running = false;
-
-  const tick = async () => {
-    if (running) {
-      return;
+  const drainOne = async (): Promise<boolean> => {
+    const job = await store.claimNextPendingPanelJob();
+    if (!job) {
+      return false;
     }
 
-    running = true;
+    logger.info("panel_job.claimed", {
+      jobId: job.id,
+      guildId: job.guildId,
+      panelId: job.panelId,
+      channelId: job.channelId,
+      requestedByUserId: job.requestedByUserId,
+      attempts: job.attempts
+    });
+
     try {
-      const resetCount = await store.resetStalePanelJobs(PANEL_JOB_STALE_AFTER_MS);
-      if (resetCount > 0) {
-        logger.warn("panel_job.stale_reset", { resetCount });
-      }
-
-      while (true) {
-        const job = await store.claimNextPendingPanelJob();
-        if (!job) {
-          break;
-        }
-
-        logger.info("panel_job.claimed", {
-          jobId: job.id,
-          guildId: job.guildId,
-          panelId: job.panelId,
-          channelId: job.channelId,
-          requestedByUserId: job.requestedByUserId,
-          attempts: job.attempts
-        });
-
-        try {
-          await processPanelJob(client, store, job);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          logger.error("panel_job.failed", error, {
-            jobId: job.id,
-            guildId: job.guildId,
-            panelId: job.panelId,
-            channelId: job.channelId
-          });
-          await store.failPanelJob(job.id, message);
-        }
-      }
+      await processPanelJob(client, store, job);
     } catch (error) {
-      logger.error("panel_job.worker_failed", error);
-    } finally {
-      running = false;
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error("panel_job.failed", error, {
+        jobId: job.id,
+        guildId: job.guildId,
+        panelId: job.panelId,
+        channelId: job.channelId
+      });
+      await store.failPanelJob(job.id, message);
     }
+
+    return true;
   };
 
-  const interval = setInterval(tick, PANEL_JOB_WORKER_INTERVAL_MS);
-  void tick();
-  return () => clearInterval(interval);
+  return startJobWorker({
+    name: "panel_job",
+    resetStale: () => store.resetStalePanelJobs(PANEL_JOB_STALE_AFTER_MS),
+    drainOne,
+    watch: (onPending) => store.watchPendingPanelJobs(onPending)
+  });
 }
 
 export const painelCommand: SlashCommand = {

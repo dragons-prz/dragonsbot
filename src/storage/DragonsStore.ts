@@ -49,6 +49,13 @@ export interface DragonsStore {
   failMemberActionJob(id: string, error: string): Promise<void>;
   cancelMemberActionJob(id: string, reason: string): Promise<void>;
   resetStaleProcessingMemberActionJobs(staleAfterMs: number): Promise<number>;
+  /**
+   * Observa a fila `memberActionJobs` e chama `onPending` sempre que existir (ou
+   * passar a existir) algum job com status `pending`. Retorna uma funcao para
+   * cancelar a observacao. Substitui o polling fixo do worker: o Firestore so e
+   * consultado quando ha mudanca de fato na fila.
+   */
+  watchPendingMemberActionJobs(onPending: () => void): () => void;
 
   createRecruitment(input: CreateRecruitmentInput): Promise<Recruitment>;
   getRecruitment(id: number): Promise<Recruitment | null>;
@@ -79,6 +86,13 @@ export interface DragonsStore {
   completePanelJob(id: string, messageId: string): Promise<void>;
   failPanelJob(id: string, error: string): Promise<void>;
   resetStalePanelJobs(staleAfterMs: number): Promise<number>;
+  /**
+   * Observa a fila `panelJobs` e chama `onPending` sempre que existir (ou passar
+   * a existir) algum job com status `pending`. Retorna uma funcao para cancelar
+   * a observacao. Substitui o polling fixo do worker: o Firestore so e
+   * consultado quando ha mudanca de fato na fila.
+   */
+  watchPendingPanelJobs(onPending: () => void): () => void;
 
   addToBlacklist(guildId: string, userId: string, reason: string, addedByUserId: string): Promise<BlacklistEntry>;
   removeFromBlacklist(guildId: string, userId: string): Promise<BlacklistEntry | null>;
