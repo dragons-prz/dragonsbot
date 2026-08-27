@@ -10,7 +10,7 @@ import {
   PermissionFlagsBits,
   SlashCommandBuilder
 } from "discord.js";
-import { startBackgroundTransaction } from "newrelic";
+import newrelic from "newrelic";
 
 import { PanelButtonStyle, PanelConfig, PanelJob } from "../domain/types";
 import { memberIsAdmin, requireGuildMember } from "../utils/discord";
@@ -138,7 +138,7 @@ export function startPanelJobWorker(client: Client, store: CommandStore): () => 
 
     // Uma background transaction por job processado (OtherTransaction/job/panel_job)
     // — polls vazios nao geram transacao.
-    await startBackgroundTransaction("panel_job", "job", async () => {
+    await newrelic.startBackgroundTransaction("panel_job", "job", async () => {
       logger.info("panel_job.claimed", {
         jobId: job.id,
         guildId: job.guildId,

@@ -2,7 +2,7 @@
 // conforme sao carregados (o `require` acontece nesta linha, qualquer que seja
 // a forma do import). Sem NEW_RELIC_LICENSE_KEY ele se desliga sozinho (ver
 // newrelic.js), entao e inofensivo em dev/CI.
-import { startBackgroundTransaction } from "newrelic";
+import newrelic from "newrelic";
 import {
   Client,
   Collection,
@@ -92,7 +92,7 @@ async function main(): Promise<void> {
           return;
         }
 
-        await startBackgroundTransaction(interaction.commandName, "command", async () => {
+        await newrelic.startBackgroundTransaction(interaction.commandName, "command", async () => {
           await command.execute(interaction, { store });
           logger.info("interaction.command.completed", {
             commandName: interaction.commandName,
@@ -129,7 +129,7 @@ async function main(): Promise<void> {
         // Nome pelo prefixo do handler (bounded), nunca pelo customId cru
         // (tem ID dinamico -> explode cardinalidade de transacao).
         const txName = handler.customIdPrefix.replace(/:$/, "");
-        await startBackgroundTransaction(txName, "button", async () => {
+        await newrelic.startBackgroundTransaction(txName, "button", async () => {
           await handler.execute(interaction, { store });
           logger.info("interaction.button.completed", {
             customId: interaction.customId,

@@ -1,4 +1,4 @@
-import { startBackgroundTransaction } from "newrelic";
+import newrelic from "newrelic";
 
 import {
   ActionRowBuilder,
@@ -834,7 +834,7 @@ export function startMemberActionJobWorker(client: Client, store: CommandStore) 
 
     // Uma background transaction por job, nomeada pelo tipo
     // (OtherTransaction/member_action_job/verify_member | approve_recruitment).
-    await startBackgroundTransaction(job.type, "member_action_job", async () => {
+    await newrelic.startBackgroundTransaction(job.type, "member_action_job", async () => {
       try {
         await processMemberActionJob(client, store, job);
       } catch (error) {
