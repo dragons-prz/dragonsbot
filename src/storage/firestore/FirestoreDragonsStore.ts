@@ -571,6 +571,10 @@ export class FirestoreDragonsStore implements DragonsStore {
     return staleDocs.length;
   }
 
+  watchPendingMemberActionJobs(onPending: () => void): () => void {
+    return this.watchPendingJobs("memberActionJobs", "member_action_job", onPending);
+  }
+
   async createRecruitment(input: CreateRecruitmentInput): Promise<Recruitment> {
     const now = new Date().toISOString();
     const recruitment = await this.db.runTransaction(async (transaction) => {
@@ -1065,6 +1069,67 @@ export class FirestoreDragonsStore implements DragonsStore {
     }
     await batch.commit();
     return staleDocs.length;
+  }
+
+  watchPendingPanelJobs(onPending: () => void): () => void {
+    return this.watchPendingJobs("panelJobs", "panel_job", onPending);
+  }
+
+  /**
+   * Observador compartilhado das filas internas. Um `onSnapshot` na query
+   * `status == "pending"` (indice de campo unico, sem indice composto) dispara
+   * `onPending` quando ha job pendente. Se o listener cair (ex.: rede,
+   * `RESOURCE_EXHAUSTED`), reassina sozinho apos um intervalo — a rede de
+   * seguranca do worker cobre o buraco enquanto isso.
+   */
+  private watchPendingJobs(
+    collection: string,
+    logPrefix: string,
+    onPending: () => void
+  ): () => void {
+    const RESUBSCRIBE_DELAY_MS = 30_000;
+    let cancelled = false;
+    let unsubscribe: (() => void) | null = null;
+    let resubscribeTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const subscribe = (): void => {
+      if (cancelled) {
+        return;
+      }
+      unsubscribe = this.db
+        .collection(collection)
+        .where("status", "==", "pending")
+        .onSnapshot(
+          (snapshot) => {
+            if (!snapshot.empty) {
+              onPending();
+            }
+          },
+          (error) => {
+            unsubscribe = null;
+            logger.error(`${logPrefix}.watch_failed`, error, {
+              resubscribeMs: RESUBSCRIBE_DELAY_MS
+            });
+            if (!cancelled) {
+              resubscribeTimer = setTimeout(subscribe, RESUBSCRIBE_DELAY_MS);
+            }
+          }
+        );
+    };
+
+    subscribe();
+
+    return () => {
+      cancelled = true;
+      if (resubscribeTimer) {
+        clearTimeout(resubscribeTimer);
+        resubscribeTimer = null;
+      }
+      if (unsubscribe) {
+        unsubscribe();
+        unsubscribe = null;
+      }
+    };
   }
 
   private mapPanel(data: PanelDocument): PanelConfig {

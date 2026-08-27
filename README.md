@@ -215,6 +215,14 @@ Status de job:
 
 Se o bot reiniciar durante um job, jobs travados em `processing` voltam para `pending` automaticamente depois de alguns minutos.
 
+O worker nao faz mais polling fixo. Ele mantem um observador (`onSnapshot`) na
+query `status == "pending"` e so consulta o Firestore quando um job entra na
+fila. Um `setTimeout` recorrente (60s, com backoff exponencial ate 15min apos
+falhas consecutivas) fica de rede de seguranca: destrava jobs presos e cobre o
+caso do observador cair. Antes eram dois workers varrendo o Firestore de 5 em 5
+segundos para sempre — sozinhos passavam de 60 mil leituras/dia ociosas, o
+bastante para estourar a cota diaria do plano Spark.
+
 ### `/pontos`
 
 Mostra sua pontuacao atual e a quantidade de recrutamentos aprovados feitos por voce. A resposta e privada.
@@ -248,7 +256,7 @@ Campos de cada job:
 - `messageId`: preenchido quando o job e concluido
 - `attempts`, `error`, `createdAt`, `updatedAt`
 
-O worker interno roda a cada 5 segundos, pega o job `pending` mais antigo (numa transacao, para dois processos nunca pegarem o mesmo job), publica a mensagem do painel (editando a mensagem existente quando o painel ja foi publicado nesse mesmo canal, ou enviando uma nova quando essa mensagem foi apagada ou nao existe ainda) e marca o job como `completed` com o `messageId` resultante. Se qualquer etapa falhar, o job vira `failed` com uma mensagem de erro legivel e o worker continua processando os proximos jobs normalmente. Jobs travados em `processing` por mais de 5 minutos (por exemplo, apos um reinicio do bot) voltam automaticamente para `pending`.
+O worker interno e acordado por um observador (`onSnapshot`) da query de jobs `pending` — nao ha mais polling fixo de 5 segundos (ver "Fila assincrona" acima para o motivo e para a rede de seguranca com backoff). Ao acordar, pega o job `pending` mais antigo (numa transacao, para dois processos nunca pegarem o mesmo job), publica a mensagem do painel (editando a mensagem existente quando o painel ja foi publicado nesse mesmo canal, ou enviando uma nova quando essa mensagem foi apagada ou nao existe ainda) e marca o job como `completed` com o `messageId` resultante. Se qualquer etapa falhar, o job vira `failed` com uma mensagem de erro legivel e o worker continua processando os proximos jobs normalmente. Jobs travados em `processing` por mais de 5 minutos (por exemplo, apos um reinicio do bot) voltam automaticamente para `pending`.
 
 ### `/blacklist`
 
@@ -356,7 +364,13 @@ Eventos principais:
 - `panel_job.updated`
 - `panel_job.failed`
 - `panel_job.stale_reset`
-- `panel_job.worker_failed`
+- `panel_job.worker_failed` (inclui `consecutiveFailures` e `nextRetryMs` do backoff)
+- `panel_job.watch_failed` (observador `onSnapshot` caiu; reassina sozinho)
+- `member_action_job.failed`
+- `member_action_job.restore_ui_failed`
+- `member_action_job.stale_reset`
+- `member_action_job.worker_failed` (inclui `consecutiveFailures` e `nextRetryMs` do backoff)
+- `member_action_job.watch_failed` (observador `onSnapshot` caiu; reassina sozinho)
 - `blacklist.added`
 - `blacklist.removed`
 - `blacklist.blocked`

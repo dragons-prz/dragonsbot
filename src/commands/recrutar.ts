@@ -20,12 +20,12 @@ import {
   memberHasRole,
   requireGuildMember
 } from "../utils/discord";
+import { startJobWorker } from "../utils/jobWorker";
 import { logger } from "../utils/logger";
 import { ButtonHandler, SlashCommand } from "./types";
 
 const APPROVE_PREFIX = "recruitment:approve:";
 const VERIFY_MEMBER_PREFIX = "member:verify:";
-const JOB_WORKER_INTERVAL_MS = 5000;
 const JOB_STALE_AFTER_MS = 5 * 60 * 1000;
 
 function buildApprovedMessage(
@@ -824,56 +824,41 @@ async function restoreMemberActionJobUiOnFailure(client: Client, store: CommandS
 }
 
 export function startMemberActionJobWorker(client: Client, store: CommandStore) {
-  let running = false;
-
-  const tick = async () => {
-    if (running) {
-      return;
+  const drainOne = async (): Promise<boolean> => {
+    const job = await store.claimNextPendingMemberActionJob();
+    if (!job) {
+      return false;
     }
 
-    running = true;
     try {
-      const resetCount = await store.resetStaleProcessingMemberActionJobs(JOB_STALE_AFTER_MS);
-      if (resetCount > 0) {
-        logger.warn("member_action_job.stale_reset", { resetCount });
-      }
-
-      while (true) {
-        const job = await store.claimNextPendingMemberActionJob();
-        if (!job) {
-          break;
-        }
-
-        try {
-          await processMemberActionJob(client, store, job);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          logger.error("member_action_job.failed", error, {
-            jobId: job.id,
-            type: job.type,
-            guildId: job.guildId,
-            userId: job.userId,
-            recruitmentId: job.recruitmentId
-          });
-          await store.failMemberActionJob(job.id, message);
-          await restoreMemberActionJobUiOnFailure(client, store, job, message).catch((restoreError) => {
-            logger.error("member_action_job.restore_ui_failed", restoreError, {
-              jobId: job.id,
-              type: job.type
-            });
-          });
-        }
-      }
+      await processMemberActionJob(client, store, job);
     } catch (error) {
-      logger.error("member_action_job.worker_failed", error);
-    } finally {
-      running = false;
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error("member_action_job.failed", error, {
+        jobId: job.id,
+        type: job.type,
+        guildId: job.guildId,
+        userId: job.userId,
+        recruitmentId: job.recruitmentId
+      });
+      await store.failMemberActionJob(job.id, message);
+      await restoreMemberActionJobUiOnFailure(client, store, job, message).catch((restoreError) => {
+        logger.error("member_action_job.restore_ui_failed", restoreError, {
+          jobId: job.id,
+          type: job.type
+        });
+      });
     }
+
+    return true;
   };
 
-  const interval = setInterval(tick, JOB_WORKER_INTERVAL_MS);
-  void tick();
-  return () => clearInterval(interval);
+  return startJobWorker({
+    name: "member_action_job",
+    resetStale: () => store.resetStaleProcessingMemberActionJobs(JOB_STALE_AFTER_MS),
+    drainOne,
+    watch: (onPending) => store.watchPendingMemberActionJobs(onPending)
+  });
 }
 
 export const recrutarCommand: SlashCommand = {
