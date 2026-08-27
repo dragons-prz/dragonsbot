@@ -40,6 +40,18 @@ declare module "newrelic" {
       error: Error,
       customAttributes?: Record<string, string | number | boolean>
     ): void;
+
+    /**
+     * Encaminha uma linha de log para o New Relic. Respeita
+     * `application_logging.forwarding.enabled`; no-op com o agente desativado.
+     * Dentro de uma transacao, ganha `trace.id`/`span.id` automaticamente.
+     */
+    recordLogEvent(logEvent: {
+      message: string;
+      level?: string;
+      timestamp?: number;
+      [key: string]: unknown;
+    }): void;
   }
 
   const newrelic: NewRelicApi;

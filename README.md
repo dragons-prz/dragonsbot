@@ -406,6 +406,10 @@ sozinha. O que existe:
   Databases), emite metricas `Custom/Firestore/*` e loga um agregado
   `firestore.usage` a cada 5min com contagem/latencia por metodo — sinal de
   volume que **nao depende do New Relic nem do plano do Firebase**.
+- **Logs** (`src/utils/logger.ts`): cada linha e encaminhada por
+  `newrelic.recordLogEvent(...)`. O agente so auto-instrumenta winston/pino/
+  bunyan; este logger e `console` puro, entao sem esse encaminhamento explicito
+  a aba Logs do APM fica vazia. Desligavel com `NEW_RELIC_LOG_FORWARDING=false`.
 - De graca do agente: runtime/GC, erros e chamadas externas (Discord API).
 
 ## Validacao
