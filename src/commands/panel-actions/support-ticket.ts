@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { ChannelType, GuildMember, MessageFlags } from "discord.js";
 
 import { logger } from "../../utils/logger";
@@ -6,6 +8,17 @@ import { buildTicketActionRow, roleMentions } from "../ticket-shared";
 import { PanelActionContext } from "./types";
 
 const THREAD_NAME_MAX = 100;
+
+/** Id de ticket (20 chars, estilo auto-id do Firestore) gerado antes de criar o topico. */
+function newTicketId(): string {
+  return randomUUID().replace(/-/g, "").slice(0, 20);
+}
+
+/** Data no formato AAAAMMDD, usada como variavel `{date}` no nome do topico. */
+function todayStamp(): string {
+  const now = new Date();
+  return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+}
 
 /**
  * Acao `support-ticket`: abre um topico privado de atendimento para quem
@@ -69,10 +82,16 @@ export async function openSupportTicket({
   }
 
   try {
+    const ticketId = newTicketId();
     const displayName =
       interaction.member instanceof GuildMember ? interaction.member.displayName : interaction.user.username;
+    // `{user}` = nome de quem abriu (slug); `{date}` = AAAAMMDD; `{shortid}`
+    // = prefixo do id do ticket (unicidade garantida). Variaveis nao usadas
+    // no template ficam de fora sem quebrar.
     const threadName = renderTemplate(category.threadNameTemplate, {
-      user: slugify(displayName, THREAD_NAME_MAX) || "ticket"
+      user: slugify(displayName, THREAD_NAME_MAX) || "ticket",
+      date: todayStamp(),
+      shortid: ticketId.slice(0, 4)
     }).slice(0, THREAD_NAME_MAX);
 
     const thread = await parent.threads.create({
@@ -94,6 +113,7 @@ export async function openSupportTicket({
     });
 
     const ticket = await store.createTicket({
+      id: ticketId,
       guildId,
       panelId,
       categoryId,

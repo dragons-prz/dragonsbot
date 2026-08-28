@@ -258,7 +258,7 @@ Os paineis ficam salvos na colecao `panels` do Firestore, o que permite reconfig
 
 ### Ticket de suporte (acao `support-ticket`)
 
-Uma opcao de dropdown (ou botao) com `action: { type: "run", actionId: "support-ticket", params: { category } }` abre um **topico privado** de atendimento quando acionada. O `params.category` referencia uma **categoria de suporte** (`supportCategories/{guildId}_{id}`), configurada **so pela `dragons-platform`** — o bot apenas le. Cada categoria define: `parentChannelId` (canal de texto onde o topico privado nasce), `supportRoleIds` (marcados no topico e unicos que podem Atender/Fechar), `viewerRoleIds` (cargos que so visualizam), `threadNameTemplate` (`{user}` vira o nome do autor em slug), e os templates `openMessage` / `claimMessage` / `closeMessage` (aceitam `{user}`, `{claimer}`, `{closer}`).
+Uma opcao de dropdown (ou botao) com `action: { type: "run", actionId: "support-ticket", params: { category } }` abre um **topico privado** de atendimento quando acionada. O `params.category` referencia uma **categoria de suporte** (`supportCategories/{guildId}_{id}`), configurada **so pela `dragons-platform`** — o bot apenas le. Cada categoria define: `parentChannelId` (canal de texto onde o topico privado nasce), `supportRoleIds` (marcados no topico e unicos que podem Atender/Fechar), `viewerRoleIds` (cargos que so visualizam), `threadNameTemplate` (variaveis: `{user}` = nome do autor em slug, `{date}` = AAAAMMDD, `{shortid}` = prefixo do id do ticket; sem `{date}`/`{shortid}` o nome se repete a cada ticket da mesma pessoa, o que o Discord permite mas confunde o suporte), e os templates `openMessage` / `claimMessage` / `closeMessage` (aceitam `{user}`, `{claimer}`, `{closer}`).
 
 Fluxo:
 

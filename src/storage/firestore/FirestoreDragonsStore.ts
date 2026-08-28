@@ -1352,7 +1352,7 @@ export class FirestoreDragonsStore implements DragonsStore {
   }
 
   async createTicket(input: CreateTicketInput): Promise<TicketRecord> {
-    const ref = this.ticketRef(this.db.collection("tickets").doc().id);
+    const ref = this.ticketRef(input.id ?? this.db.collection("tickets").doc().id);
     const now = new Date().toISOString();
     const document: TicketDocument = {
       id: ref.id,

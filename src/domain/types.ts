@@ -341,6 +341,9 @@ export interface TicketRecord {
 }
 
 export interface CreateTicketInput {
+  /** Id do documento. Quando omitido, a store gera um. O fluxo de abertura
+   * passa um id gerado antes para usar um prefixo dele no nome do topico. */
+  id?: string;
   guildId: string;
   panelId: string;
   categoryId: string;
