@@ -249,6 +249,8 @@ Cria paineis informativos: uma mensagem com titulo, descricao, imagem opcional, 
 
 Os paineis ficam salvos na colecao `panels` do Firestore, o que permite reconfigurar sem reiniciar o bot e e usada pela interface web de configuracao (`dragons-platform`) para criar e editar paineis. Cada painel guarda `publishedChannelId`/`publishedMessageId` (nulos ate a primeira publicacao) para saber onde a mensagem foi publicada por ultimo, alem de `color: string | null` (cor lateral do embed principal, hex tipo `#E03131`). Cada botao (`PanelButtonConfig`) guarda tambem `responseImageUrl: string | null` (imagem exibida na resposta) e `responseColor: string | null` (cor lateral da resposta). Documentos criados antes dessa mudanca nao tem esses campos gravados no Firestore; o bot os trata como ausentes = `null` ao ler, sem quebrar.
 
+**Layout do painel (`layout`).** `layout: "embed" | "container"` (ausente = `"embed"`). No `embed` (formato historico) a imagem fica embaixo e o `title` do embed nao renderiza emoji customizado do servidor. No `container` a mensagem usa **Components V2** (`ContainerBuilder`): a imagem vira um banner no topo e o titulo/descricao viram texto markdown (emoji de qualquer tipo, em qualquer lugar). A flag `IsComponentsV2` **nao pode ser ligada/desligada editando** uma mensagem ja publicada — quando o `layout` de um painel publicado muda, o `publishPanelToChannel` apaga a mensagem antiga e reposta uma nova (evento `panel.layout_reposted`, `panelJob` fica `published` em vez de `updated`).
+
 **Tipo do painel e acoes (`kind` / `action`).** Um painel tem `kind: "buttons" | "select"` (ausente = `"buttons"`). Quando `kind === "select"`, o painel mostra um unico dropdown (`PanelSelectConfig`: `placeholder` + `options[]`) no lugar das linhas de botoes; cada opcao tem `label`, `description`, `emoji` e uma acao. Cada botao **e** cada opcao carrega uma `PanelActionConfig`:
 
 - `{ type: "reply", response, responseImageUrl, responseColor }` - o comportamento historico (embed efemero). Documentos antigos sem `action` sao lidos como esta acao, montada a partir dos campos legados do botao.
@@ -256,7 +258,7 @@ Os paineis ficam salvos na colecao `panels` do Firestore, o que permite reconfig
 
 ### Ticket de suporte (acao `support-ticket`)
 
-Uma opcao de dropdown (ou botao) com `action: { type: "run", actionId: "support-ticket", params: { category } }` abre um **topico privado** de atendimento quando acionada. O `params.category` referencia uma **categoria de suporte** (`supportCategories/{guildId}_{id}`), configurada **so pela `dragons-platform`** — o bot apenas le. Cada categoria define: `parentChannelId` (canal de texto onde o topico privado nasce), `supportRoleIds` (marcados no topico e unicos que podem Atender/Fechar), `viewerRoleIds` (cargos que so visualizam), `threadNameTemplate` (`{user}` vira o nome do autor em slug), e os templates `openMessage` / `claimMessage` / `closeMessage` (aceitam `{user}`, `{claimer}`, `{closer}`).
+Uma opcao de dropdown (ou botao) com `action: { type: "run", actionId: "support-ticket", params: { category } }` abre um **topico privado** de atendimento quando acionada. O `params.category` referencia uma **categoria de suporte** (`supportCategories/{guildId}_{id}`), configurada **so pela `dragons-platform`** — o bot apenas le. Cada categoria define: `parentChannelId` (canal de texto onde o topico privado nasce), `supportRoleIds` (marcados no topico e unicos que podem Atender/Fechar), `viewerRoleIds` (cargos que so visualizam), `threadNameTemplate` (variaveis: `{user}` = nome do autor em slug, `{date}` = AAAAMMDD, `{shortid}` = prefixo do id do ticket; sem `{date}`/`{shortid}` o nome se repete a cada ticket da mesma pessoa, o que o Discord permite mas confunde o suporte), e os templates `openMessage` / `claimMessage` / `closeMessage` (aceitam `{user}`, `{claimer}`, `{closer}`).
 
 Fluxo:
 
@@ -391,6 +393,7 @@ Eventos principais:
 - `panel_job.worker_failed` (inclui `consecutiveFailures` e `nextRetryMs` do backoff)
 - `panel_job.watch_failed` (observador `onSnapshot` caiu; reassina sozinho)
 - `panel.action_run` / `panel.action_unknown`
+- `panel.layout_reposted` (layout mudou; mensagem antiga apagada e repostada)
 - `ticket.opened` / `ticket.open_denied` / `ticket.open_failed`
 - `ticket.claimed` / `ticket.closed`
 - `ticket.opener_add_failed` / `ticket.ping_edit_failed`

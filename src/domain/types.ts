@@ -205,6 +205,17 @@ export type PanelButtonStyle = "Primary" | "Secondary" | "Success" | "Danger";
 export type PanelKind = "buttons" | "select";
 
 /**
+ * Formato da mensagem do painel:
+ * - `embed`: um `EmbedBuilder` (formato historico) — imagem sempre embaixo,
+ *   `title` nao renderiza emoji customizado do servidor.
+ * - `container`: Components V2 (`ContainerBuilder`) — a imagem vira um
+ *   banner no topo e o titulo/descricao viram texto markdown.
+ *
+ * Ausente no documento = `"embed"`.
+ */
+export type PanelLayout = "embed" | "container";
+
+/**
  * Acao disparada quando um botao/opcao do painel e clicado.
  *
  * - `reply`: responde com um embed efemero (comportamento historico do
@@ -269,6 +280,7 @@ export interface PanelConfig {
   imageUrl: string | null;
   color: string | null;
   kind: PanelKind;
+  layout: PanelLayout;
   buttons: PanelButtonConfig[];
   /** Preenchido apenas quando `kind === "select"`; `null` caso contrario. */
   select: PanelSelectConfig | null;
@@ -329,6 +341,9 @@ export interface TicketRecord {
 }
 
 export interface CreateTicketInput {
+  /** Id do documento. Quando omitido, a store gera um. O fluxo de abertura
+   * passa um id gerado antes para usar um prefixo dele no nome do topico. */
+  id?: string;
   guildId: string;
   panelId: string;
   categoryId: string;
