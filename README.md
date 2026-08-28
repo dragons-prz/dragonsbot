@@ -11,6 +11,10 @@ Bot Discord em TypeScript usando `discord.js` para fluxo de recrutamento com apr
   - ler membros
   - enviar mensagens
   - gerenciar cargos
+  - criar topicos privados, enviar mensagens em topicos e gerenciar topicos
+    (usado pelo ticket de suporte)
+  - marcar `@everyone`, `@here` e todos os cargos (para pingar cargos de
+    suporte nao mencionaveis no topico do ticket)
 
 O cargo do bot precisa estar acima do cargo de membro na hierarquia do Discord.
 
@@ -241,9 +245,26 @@ Cria paineis informativos: uma mensagem com titulo, descricao, imagem opcional, 
 - `add-botao id:<texto> label:<texto> resposta:<texto> estilo:<opcional> emoji:<opcional> resposta-imagem:<opcional> resposta-cor:<opcional>` - adiciona um botao. `estilo` pode ser Cinza (padrao), Azul, Verde ou Vermelho. `resposta-imagem` e um anexo exibido na resposta ao clicar; `resposta-cor` e hex (ex: `#E03131`) para a cor lateral dessa resposta. Ambos sao opcionais e ficam `null` quando omitidos.
 - `remover-botao id:<texto> botao-id:<texto>` - remove um botao pelo id gerado a partir do label. Nao existe "editar botao": para mudar label, resposta, imagem ou cor de um botao ja existente, remova e recrie com `add-botao`.
 - `publicar id:<texto> canal:<canal>` - publica a mensagem do painel no canal indicado. Se o painel ja tiver sido publicado antes nesse mesmo canal (`publishedChannelId`/`publishedMessageId`), o comando **edita** a mensagem existente em vez de enviar uma nova; se a mensagem publicada anteriormente tiver sido apagada, ele envia uma nova mensagem normalmente. A resposta do comando deixa claro se o painel foi publicado ou atualizado.
-- `listar` - lista os paineis do servidor com a quantidade de botoes de cada um.
+- `listar` - lista os paineis do servidor com a quantidade de botoes/opcoes de cada um.
 
 Os paineis ficam salvos na colecao `panels` do Firestore, o que permite reconfigurar sem reiniciar o bot e e usada pela interface web de configuracao (`dragons-platform`) para criar e editar paineis. Cada painel guarda `publishedChannelId`/`publishedMessageId` (nulos ate a primeira publicacao) para saber onde a mensagem foi publicada por ultimo, alem de `color: string | null` (cor lateral do embed principal, hex tipo `#E03131`). Cada botao (`PanelButtonConfig`) guarda tambem `responseImageUrl: string | null` (imagem exibida na resposta) e `responseColor: string | null` (cor lateral da resposta). Documentos criados antes dessa mudanca nao tem esses campos gravados no Firestore; o bot os trata como ausentes = `null` ao ler, sem quebrar.
+
+**Tipo do painel e acoes (`kind` / `action`).** Um painel tem `kind: "buttons" | "select"` (ausente = `"buttons"`). Quando `kind === "select"`, o painel mostra um unico dropdown (`PanelSelectConfig`: `placeholder` + `options[]`) no lugar das linhas de botoes; cada opcao tem `label`, `description`, `emoji` e uma acao. Cada botao **e** cada opcao carrega uma `PanelActionConfig`:
+
+- `{ type: "reply", response, responseImageUrl, responseColor }` - o comportamento historico (embed efemero). Documentos antigos sem `action` sao lidos como esta acao, montada a partir dos campos legados do botao.
+- `{ type: "run", actionId, params }` - dispara uma acao registrada no bot (`src/commands/panel-actions/registry.ts`). Hoje ha uma: `support-ticket` (ver abaixo). O `/painel add-botao` so cria acoes `reply`; acoes `run` sao configuradas pela `dragons-platform`.
+
+### Ticket de suporte (acao `support-ticket`)
+
+Uma opcao de dropdown (ou botao) com `action: { type: "run", actionId: "support-ticket", params: { category } }` abre um **topico privado** de atendimento quando acionada. O `params.category` referencia uma **categoria de suporte** (`supportCategories/{guildId}_{id}`), configurada **so pela `dragons-platform`** — o bot apenas le. Cada categoria define: `parentChannelId` (canal de texto onde o topico privado nasce), `supportRoleIds` (marcados no topico e unicos que podem Atender/Fechar), `viewerRoleIds` (cargos que so visualizam), `threadNameTemplate` (`{user}` vira o nome do autor em slug), e os templates `openMessage` / `claimMessage` / `closeMessage` (aceitam `{user}`, `{claimer}`, `{closer}`).
+
+Fluxo:
+
+1. Ao escolher a opcao, o bot reserva a trava `openTicketKeys/{guildId}_{userId}` (**1 ticket aberto por usuario**), cria o topico privado, adiciona o autor, e posta uma mensagem marcando os cargos de suporte/visualizacao com os botoes **"Atender ticket"** e **"Fechar ticket"**. O ticket vai para `tickets/{ticketId}` com `status: "open"`.
+2. **Atender ticket** (so cargo de suporte): transacao `open -> claimed`, posta "\<suporte\> esta atendendo o ticket de \<autor\>" no topico e desabilita o botao "Atender".
+3. **Fechar ticket** (so cargo de suporte): transacao `-> closed`, libera a trava do autor, posta a `closeMessage`, remove o autor do topico privado, tranca e arquiva o topico (`closeAction: "archive-remove"`).
+
+`TicketRecord` guarda ainda `feedbackRating` / `feedbackComment` (nulos por enquanto — o fluxo de feedback e uma fase futura). Ver `docs/specs/2026-08-27-painel-acoes-e-ticket-suporte.md`.
 
 ### Fila de publicacao de paineis (`panelJobs`)
 
@@ -321,6 +342,9 @@ Colecoes usadas no Firestore:
 - `memberActionJobs`
 - `panels`
 - `panelJobs`
+- `supportCategories` (categorias de ticket; escrita so pela `dragons-platform`)
+- `tickets` (tickets de suporte abertos; escrita so pelo bot)
+- `openTicketKeys` (trava de 1 ticket aberto por usuario)
 - `blacklist`
 
 Se ja houver dados antigos em `recruiterPoints`/`recruiterPointEvents`, migre para a estrutura generica:
@@ -366,6 +390,11 @@ Eventos principais:
 - `panel_job.stale_reset`
 - `panel_job.worker_failed` (inclui `consecutiveFailures` e `nextRetryMs` do backoff)
 - `panel_job.watch_failed` (observador `onSnapshot` caiu; reassina sozinho)
+- `panel.action_run` / `panel.action_unknown`
+- `ticket.opened` / `ticket.open_denied` / `ticket.open_failed`
+- `ticket.claimed` / `ticket.closed`
+- `ticket.opener_add_failed` / `ticket.ping_edit_failed`
+- `interaction.select.received` / `interaction.select.completed`
 - `member_action_job.failed`
 - `member_action_job.restore_ui_failed`
 - `member_action_job.stale_reset`

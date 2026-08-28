@@ -197,15 +197,68 @@ export interface BlacklistEntry {
 
 export type PanelButtonStyle = "Primary" | "Secondary" | "Success" | "Danger";
 
+/**
+ * Tipo do painel: `buttons` (linhas de botoes, o formato historico) ou
+ * `select` (um unico dropdown no lugar dos botoes). Documentos antigos nao
+ * tem o campo — o mapeamento da store trata ausencia como `"buttons"`.
+ */
+export type PanelKind = "buttons" | "select";
+
+/**
+ * Acao disparada quando um botao/opcao do painel e clicado.
+ *
+ * - `reply`: responde com um embed efemero (comportamento historico do
+ *   painel — os campos `response`/`responseImageUrl`/`responseColor`).
+ * - `run`: dispara uma acao registrada no bot (`PANEL_ACTION_REGISTRY`),
+ *   identificada por `actionId`, com parametros livres.
+ */
+export interface PanelReplyAction {
+  type: "reply";
+  response: string;
+  responseImageUrl: string | null;
+  responseColor: string | null;
+}
+
+export interface PanelRunAction {
+  type: "run";
+  actionId: string;
+  params: Record<string, string>;
+}
+
+export type PanelActionConfig = PanelReplyAction | PanelRunAction;
+
+/** Ids de acao `run` reconhecidos pelo bot — espelho do `PANEL_ACTIONS` da dragons-platform. */
+export const PANEL_ACTION_IDS = ["support-ticket"] as const;
+export type PanelActionId = (typeof PANEL_ACTION_IDS)[number];
+
 export interface PanelButtonConfig {
   id: string;
   label: string;
   emoji: string | null;
   style: PanelButtonStyle;
+  /**
+   * Campos legados mantidos para compatibilidade: quando o documento nao
+   * tem `action`, a store monta `{ type: "reply", ... }` a partir deles.
+   */
   response: string;
   responseImageUrl: string | null;
   responseColor: string | null;
+  action: PanelActionConfig;
   order: number;
+}
+
+export interface PanelSelectOption {
+  id: string;
+  label: string;
+  description: string | null;
+  emoji: string | null;
+  action: PanelActionConfig;
+  order: number;
+}
+
+export interface PanelSelectConfig {
+  placeholder: string;
+  options: PanelSelectOption[];
 }
 
 export interface PanelConfig {
@@ -215,11 +268,74 @@ export interface PanelConfig {
   description: string;
   imageUrl: string | null;
   color: string | null;
+  kind: PanelKind;
   buttons: PanelButtonConfig[];
+  /** Preenchido apenas quando `kind === "select"`; `null` caso contrario. */
+  select: PanelSelectConfig | null;
   createdAt: string;
   updatedAt: string;
   publishedChannelId?: string | null;
   publishedMessageId?: string | null;
+}
+
+export type SupportCategoryCloseAction = "archive-remove";
+
+/**
+ * Configuracao de uma categoria de ticket de suporte. Escrita SO pela
+ * dragons-platform (colecao `supportCategories/{guildId}_{id}`); o bot so
+ * le. Referenciada por uma acao `run` de `actionId: "support-ticket"` via
+ * `params.category`.
+ */
+export interface SupportCategoryConfig {
+  id: string;
+  guildId: string;
+  name: string;
+  parentChannelId: string;
+  supportRoleIds: string[];
+  viewerRoleIds: string[];
+  threadNameTemplate: string;
+  openMessage: string;
+  claimMessage: string;
+  closeMessage: string;
+  closeAction: SupportCategoryCloseAction;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type TicketStatus = "open" | "claimed" | "closed";
+
+/**
+ * Registro de um ticket de suporte aberto. Escrito SO pelo bot (colecao
+ * `tickets/{ticketId}`); a dragons-platform le para o dashboard (fase 3).
+ */
+export interface TicketRecord {
+  id: string;
+  guildId: string;
+  panelId: string;
+  categoryId: string;
+  openerUserId: string;
+  parentChannelId: string;
+  threadId: string;
+  pingMessageId: string;
+  status: TicketStatus;
+  claimedByUserId: string | null;
+  claimedAt: string | null;
+  closedByUserId: string | null;
+  closedAt: string | null;
+  feedbackRating: number | null;
+  feedbackComment: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateTicketInput {
+  guildId: string;
+  panelId: string;
+  categoryId: string;
+  openerUserId: string;
+  parentChannelId: string;
+  threadId: string;
+  pingMessageId: string;
 }
 
 export type PanelJobStatus = "pending" | "processing" | "completed" | "failed";

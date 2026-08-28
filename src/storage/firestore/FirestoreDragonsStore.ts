@@ -32,14 +32,23 @@ import {
   MemberProfile,
   MemberProfileResult,
   MemberRankingEntry,
+  PanelActionConfig,
   PanelButtonConfig,
+  PanelButtonStyle,
   PanelConfig,
   PanelJob,
   PanelJobStatus,
+  PanelKind,
+  PanelSelectConfig,
   Recruitment,
   RecruitmentKind,
   RecruitmentApprovalMessage,
-  RoleConfigKey
+  RoleConfigKey,
+  CreateTicketInput,
+  SupportCategoryCloseAction,
+  SupportCategoryConfig,
+  TicketRecord,
+  TicketStatus
 } from "../../domain/types";
 import { DragonsStore } from "../DragonsStore";
 
@@ -126,6 +135,32 @@ interface HierarchyRoleDocument {
   order: number;
 }
 
+interface PanelButtonDocument {
+  id: string;
+  label: string;
+  emoji: string | null;
+  style: PanelButtonStyle;
+  response: string;
+  responseImageUrl?: string | null;
+  responseColor?: string | null;
+  action?: PanelActionConfig;
+  order: number;
+}
+
+interface PanelSelectOptionDocument {
+  id: string;
+  label: string;
+  description?: string | null;
+  emoji: string | null;
+  action?: PanelActionConfig;
+  order: number;
+}
+
+interface PanelSelectDocument {
+  placeholder: string;
+  options: PanelSelectOptionDocument[];
+}
+
 interface PanelDocument {
   id: string;
   guildId: string;
@@ -133,11 +168,49 @@ interface PanelDocument {
   description: string;
   imageUrl: string | null;
   color: string | null;
-  buttons: PanelButtonConfig[];
+  kind?: PanelKind;
+  buttons: PanelButtonDocument[];
+  select?: PanelSelectDocument | null;
   createdAt: string;
   updatedAt: string;
   publishedChannelId?: string | null;
   publishedMessageId?: string | null;
+}
+
+interface SupportCategoryDocument {
+  id: string;
+  guildId: string;
+  name: string;
+  parentChannelId: string;
+  supportRoleIds?: string[];
+  viewerRoleIds?: string[];
+  threadNameTemplate: string;
+  openMessage: string;
+  claimMessage: string;
+  closeMessage: string;
+  closeAction?: SupportCategoryCloseAction;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface TicketDocument {
+  id: string;
+  guildId: string;
+  panelId: string;
+  categoryId: string;
+  openerUserId: string;
+  parentChannelId: string;
+  threadId: string;
+  pingMessageId: string;
+  status: TicketStatus;
+  claimedByUserId: string | null;
+  claimedAt: string | null;
+  closedByUserId: string | null;
+  closedAt: string | null;
+  feedbackRating?: number | null;
+  feedbackComment?: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface PanelJobDocument {
@@ -873,7 +946,9 @@ export class FirestoreDragonsStore implements DragonsStore {
       description,
       imageUrl: null,
       color: null,
+      kind: "buttons",
       buttons: [],
+      select: null,
       createdAt: now,
       updatedAt: now
     };
@@ -1140,15 +1215,58 @@ export class FirestoreDragonsStore implements DragonsStore {
       description: data.description,
       imageUrl: data.imageUrl ?? null,
       color: data.color ?? null,
-      buttons: [...data.buttons].sort((a, b) => a.order - b.order).map((button) => ({
-        ...button,
-        responseImageUrl: button.responseImageUrl ?? null,
-        responseColor: button.responseColor ?? null
-      })),
+      kind: data.kind ?? "buttons",
+      buttons: [...data.buttons]
+        .sort((a, b) => a.order - b.order)
+        .map((button) => this.mapPanelButton(button)),
+      select: this.mapPanelSelect(data.select),
       createdAt: data.createdAt,
       updatedAt: data.updatedAt,
       publishedChannelId: data.publishedChannelId ?? null,
       publishedMessageId: data.publishedMessageId ?? null
+    };
+  }
+
+  /**
+   * Backfill on read: documentos antigos nao tem `action` no botao — monta
+   * uma acao `reply` a partir dos campos legados
+   * (`response`/`responseImageUrl`/`responseColor`), que continuam gravados.
+   */
+  private mapPanelButton(button: PanelButtonDocument): PanelButtonConfig {
+    const response = button.response ?? "";
+    const responseImageUrl = button.responseImageUrl ?? null;
+    const responseColor = button.responseColor ?? null;
+    return {
+      id: button.id,
+      label: button.label,
+      emoji: button.emoji ?? null,
+      style: button.style,
+      response,
+      responseImageUrl,
+      responseColor,
+      action: button.action ?? { type: "reply", response, responseImageUrl, responseColor },
+      order: button.order
+    };
+  }
+
+  private mapPanelSelect(select: PanelSelectDocument | null | undefined): PanelSelectConfig | null {
+    if (!select) {
+      return null;
+    }
+    return {
+      placeholder: select.placeholder,
+      options: [...select.options]
+        .sort((a, b) => a.order - b.order)
+        .map((option) => ({
+          id: option.id,
+          label: option.label,
+          description: option.description ?? null,
+          emoji: option.emoji ?? null,
+          action:
+            option.action ??
+            ({ type: "reply", response: "", responseImageUrl: null, responseColor: null } as PanelActionConfig),
+          order: option.order
+        }))
     };
   }
 
@@ -1174,6 +1292,178 @@ export class FirestoreDragonsStore implements DragonsStore {
 
   private panelJobRef(id: string) {
     return this.db.collection("panelJobs").doc(id);
+  }
+
+  private supportCategoryRef(guildId: string, id: string) {
+    return this.db.collection("supportCategories").doc(`${guildId}_${id}`);
+  }
+
+  private ticketRef(id: string) {
+    return this.db.collection("tickets").doc(id);
+  }
+
+  private ticketSlotRef(guildId: string, openerUserId: string) {
+    return this.db.collection("openTicketKeys").doc(`${guildId}_${openerUserId}`);
+  }
+
+  async getSupportCategory(guildId: string, id: string): Promise<SupportCategoryConfig | null> {
+    const snapshot = await this.supportCategoryRef(guildId, id).get();
+    if (!snapshot.exists) {
+      return null;
+    }
+    const data = snapshot.data() as SupportCategoryDocument;
+    if (data.guildId !== guildId) {
+      return null;
+    }
+    return this.mapSupportCategory(data);
+  }
+
+  async listSupportCategories(guildId: string): Promise<SupportCategoryConfig[]> {
+    const snapshot = await this.db
+      .collection("supportCategories")
+      .where("guildId", "==", guildId)
+      .get();
+    return snapshot.docs
+      .map((doc) => this.mapSupportCategory(doc.data() as SupportCategoryDocument))
+      .sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  async claimTicketSlot(guildId: string, openerUserId: string): Promise<boolean> {
+    const ref = this.ticketSlotRef(guildId, openerUserId);
+    try {
+      await ref.create({ guildId, openerUserId, createdAt: new Date().toISOString() });
+      return true;
+    } catch (error) {
+      // `create` falha com ALREADY_EXISTS (codigo 6) quando o usuario ja tem
+      // um ticket aberto — e o caminho esperado, nao um erro real.
+      if (typeof error === "object" && error !== null && (error as { code?: number }).code === 6) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  async releaseTicketSlot(guildId: string, openerUserId: string): Promise<void> {
+    await this.ticketSlotRef(guildId, openerUserId).delete();
+  }
+
+  async createTicket(input: CreateTicketInput): Promise<TicketRecord> {
+    const ref = this.ticketRef(this.db.collection("tickets").doc().id);
+    const now = new Date().toISOString();
+    const document: TicketDocument = {
+      id: ref.id,
+      guildId: input.guildId,
+      panelId: input.panelId,
+      categoryId: input.categoryId,
+      openerUserId: input.openerUserId,
+      parentChannelId: input.parentChannelId,
+      threadId: input.threadId,
+      pingMessageId: input.pingMessageId,
+      status: "open",
+      claimedByUserId: null,
+      claimedAt: null,
+      closedByUserId: null,
+      closedAt: null,
+      feedbackRating: null,
+      feedbackComment: null,
+      createdAt: now,
+      updatedAt: now
+    };
+    await ref.set(document);
+    return this.mapTicket(document);
+  }
+
+  async getTicket(ticketId: string): Promise<TicketRecord | null> {
+    const snapshot = await this.ticketRef(ticketId).get();
+    return snapshot.exists ? this.mapTicket(snapshot.data() as TicketDocument) : null;
+  }
+
+  async claimTicket(ticketId: string, claimerUserId: string): Promise<TicketRecord | null> {
+    const ref = this.ticketRef(ticketId);
+    return this.db.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(ref);
+      if (!snapshot.exists) {
+        return null;
+      }
+      const current = snapshot.data() as TicketDocument;
+      if (current.status !== "open") {
+        return this.mapTicket(current);
+      }
+      const now = new Date().toISOString();
+      const updated: TicketDocument = {
+        ...current,
+        status: "claimed",
+        claimedByUserId: claimerUserId,
+        claimedAt: now,
+        updatedAt: now
+      };
+      transaction.set(ref, updated);
+      return this.mapTicket(updated);
+    });
+  }
+
+  async closeTicket(ticketId: string, closerUserId: string): Promise<TicketRecord | null> {
+    const ref = this.ticketRef(ticketId);
+    return this.db.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(ref);
+      if (!snapshot.exists) {
+        return null;
+      }
+      const current = snapshot.data() as TicketDocument;
+      if (current.status === "closed") {
+        return null;
+      }
+      const now = new Date().toISOString();
+      const updated: TicketDocument = {
+        ...current,
+        status: "closed",
+        closedByUserId: closerUserId,
+        closedAt: now,
+        updatedAt: now
+      };
+      transaction.set(ref, updated);
+      return this.mapTicket(updated);
+    });
+  }
+
+  private mapSupportCategory(data: SupportCategoryDocument): SupportCategoryConfig {
+    return {
+      id: data.id,
+      guildId: data.guildId,
+      name: data.name,
+      parentChannelId: data.parentChannelId,
+      supportRoleIds: data.supportRoleIds ?? [],
+      viewerRoleIds: data.viewerRoleIds ?? [],
+      threadNameTemplate: data.threadNameTemplate,
+      openMessage: data.openMessage,
+      claimMessage: data.claimMessage,
+      closeMessage: data.closeMessage,
+      closeAction: data.closeAction ?? "archive-remove",
+      createdAt: data.createdAt,
+      updatedAt: data.updatedAt
+    };
+  }
+
+  private mapTicket(data: TicketDocument): TicketRecord {
+    return {
+      id: data.id,
+      guildId: data.guildId,
+      panelId: data.panelId,
+      categoryId: data.categoryId,
+      openerUserId: data.openerUserId,
+      parentChannelId: data.parentChannelId,
+      threadId: data.threadId,
+      pingMessageId: data.pingMessageId,
+      status: data.status,
+      claimedByUserId: data.claimedByUserId ?? null,
+      claimedAt: data.claimedAt ?? null,
+      closedByUserId: data.closedByUserId ?? null,
+      closedAt: data.closedAt ?? null,
+      feedbackRating: data.feedbackRating ?? null,
+      feedbackComment: data.feedbackComment ?? null,
+      createdAt: data.createdAt,
+      updatedAt: data.updatedAt
+    };
   }
 
   async addToBlacklist(guildId: string, userId: string, reason: string, addedByUserId: string): Promise<BlacklistEntry> {

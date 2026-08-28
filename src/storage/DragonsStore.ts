@@ -3,6 +3,7 @@ import {
   ChannelConfigKey,
   CreateMemberEntryInput,
   CreateRecruitmentInput,
+  CreateTicketInput,
   EnqueueMemberActionJobInput,
   EnqueueMemberActionJobResult,
   GuildConfig,
@@ -19,7 +20,9 @@ import {
   PanelJob,
   Recruitment,
   RecruitmentApprovalMessage,
-  RoleConfigKey
+  RoleConfigKey,
+  SupportCategoryConfig,
+  TicketRecord
 } from "../domain/types";
 
 export interface DragonsStore {
@@ -93,6 +96,26 @@ export interface DragonsStore {
    * consultado quando ha mudanca de fato na fila.
    */
   watchPendingPanelJobs(onPending: () => void): () => void;
+
+  /**
+   * Categorias de ticket de suporte (`supportCategories/{guildId}_{id}`).
+   * Escritas SO pela dragons-platform; o bot apenas le.
+   */
+  getSupportCategory(guildId: string, id: string): Promise<SupportCategoryConfig | null>;
+  listSupportCategories(guildId: string): Promise<SupportCategoryConfig[]>;
+
+  /**
+   * Trava de "1 ticket aberto por usuario": cria `openTicketKeys/{guildId}_{openerUserId}`
+   * de forma atomica. Retorna `false` se ja existe (o usuario ja tem ticket aberto).
+   */
+  claimTicketSlot(guildId: string, openerUserId: string): Promise<boolean>;
+  releaseTicketSlot(guildId: string, openerUserId: string): Promise<void>;
+  createTicket(input: CreateTicketInput): Promise<TicketRecord>;
+  getTicket(ticketId: string): Promise<TicketRecord | null>;
+  /** Transacao: so `open` -> `claimed`. Retorna o ticket resultante, ou `null` se ja nao estava `open`. */
+  claimTicket(ticketId: string, claimerUserId: string): Promise<TicketRecord | null>;
+  /** Transacao: `open`/`claimed` -> `closed`. Retorna o ticket resultante, ou `null` se ja estava `closed` ou nao existe. */
+  closeTicket(ticketId: string, closerUserId: string): Promise<TicketRecord | null>;
 
   addToBlacklist(guildId: string, userId: string, reason: string, addedByUserId: string): Promise<BlacklistEntry>;
   removeFromBlacklist(guildId: string, userId: string): Promise<BlacklistEntry | null>;

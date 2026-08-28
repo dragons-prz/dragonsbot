@@ -29,6 +29,31 @@ export function memberHasRole(member: GuildMember, roleId: string): boolean {
   return member.roles.cache.has(roleId);
 }
 
+export function memberHasAnyRole(member: GuildMember, roleIds: readonly string[]): boolean {
+  return roleIds.some((roleId) => member.roles.cache.has(roleId));
+}
+
+/**
+ * Normaliza um texto livre para um slug seguro (letras minusculas, numeros
+ * e hifen). Usado como id de painel/botao/opcao e como base de nome de
+ * topico de ticket. `maxLength` default 40 (limite de id); nomes de topico
+ * do Discord aceitam 100.
+ */
+export function slugify(value: string, maxLength = 40): string {
+  return value
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "")
+    .slice(0, maxLength);
+}
+
+/** Substitui `{chave}` por `vars[chave]` num template; deixa intacto o que nao casar. */
+export function renderTemplate(template: string, vars: Record<string, string>): string {
+  return template.replace(/\{(\w+)\}/g, (match, key: string) => (key in vars ? vars[key] : match));
+}
+
 export function memberIsAdmin(member: GuildMember): boolean {
   return member.permissions.has(PermissionFlagsBits.Administrator);
 }
