@@ -39,8 +39,10 @@ const WRITE_PREFIXES = [
   "cancel",
   "approve",
   "seed",
-  "claim", // claimNext*: query + transacao que marca o job como "processing"
-  "reset" // resetStale*: query + batch write
+  "claim", // claimNext* / claimTicket*: query + transacao que marca o job/ticket
+  "reset", // resetStale*: query + batch write
+  "close", // closeTicket: transacao (o metodo de ciclo de vida `close` e passthrough)
+  "release" // releaseTicketSlot: delete
 ];
 
 function kindOf(method: string): OpKind {

@@ -1,6 +1,7 @@
 import {
   ActionRowBuilder,
   ButtonBuilder,
+  ButtonInteraction,
   ButtonStyle,
   ChannelType,
   Client,
@@ -8,17 +9,22 @@ import {
   EmbedBuilder,
   MessageFlags,
   PermissionFlagsBits,
-  SlashCommandBuilder
+  SlashCommandBuilder,
+  StringSelectMenuBuilder,
+  StringSelectMenuInteraction,
+  StringSelectMenuOptionBuilder
 } from "discord.js";
 import newrelic from "newrelic";
 
-import { PanelButtonStyle, PanelConfig, PanelJob } from "../domain/types";
-import { memberIsAdmin, requireGuildMember } from "../utils/discord";
+import { PanelActionConfig, PanelButtonStyle, PanelConfig, PanelJob } from "../domain/types";
+import { memberIsAdmin, requireGuildMember, slugify } from "../utils/discord";
 import { startJobWorker } from "../utils/jobWorker";
 import { logger } from "../utils/logger";
-import { ButtonHandler, SlashCommand } from "./types";
+import { runPanelAction } from "./panel-actions/registry";
+import { ButtonHandler, SelectMenuHandler, SlashCommand } from "./types";
 
 const CUSTOM_ID_PREFIX = "panel:";
+const SELECT_CUSTOM_ID_PREFIX = "panelsel:";
 const BUTTON_STYLE_MAP: Record<PanelButtonStyle, ButtonStyle> = {
   Primary: ButtonStyle.Primary,
   Secondary: ButtonStyle.Secondary,
@@ -29,14 +35,11 @@ const PANEL_JOB_STALE_AFTER_MS = 5 * 60 * 1000;
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
 const CLEAR_COLOR_KEYWORDS = new Set(["limpar", "nenhuma", "remover", "none"]);
 
-function slugify(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "")
-    .slice(0, 40);
+/** `true` quando o painel nao tem nenhum componente para renderizar/publicar. */
+export function panelIsEmpty(panel: PanelConfig): boolean {
+  return panel.kind === "select"
+    ? !panel.select || panel.select.options.length === 0
+    : panel.buttons.length === 0;
 }
 
 export function buildPanelMessage(panel: PanelConfig) {
@@ -46,6 +49,29 @@ export function buildPanelMessage(panel: PanelConfig) {
   }
   if (panel.color) {
     embed.setColor(panel.color as ColorResolvable);
+  }
+
+  if (panel.kind === "select" && panel.select && panel.select.options.length > 0) {
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId(`${SELECT_CUSTOM_ID_PREFIX}${panel.id}`)
+      .setPlaceholder(panel.select.placeholder || "Selecione uma opcao")
+      .addOptions(
+        panel.select.options.map((option) => {
+          const builder = new StringSelectMenuOptionBuilder().setLabel(option.label).setValue(option.id);
+          if (option.description) {
+            builder.setDescription(option.description);
+          }
+          if (option.emoji) {
+            builder.setEmoji(option.emoji);
+          }
+          return builder;
+        })
+      );
+
+    return {
+      embeds: [embed],
+      components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)]
+    };
   }
 
   const rows: ActionRowBuilder<ButtonBuilder>[] = [];
@@ -67,6 +93,38 @@ export function buildPanelMessage(panel: PanelConfig) {
   }
 
   return { embeds: [embed], components: rows };
+}
+
+/**
+ * Resolve o que acontece quando um botao/opcao do painel e acionado: ou
+ * responde com um embed efemero (`reply`, o comportamento historico) ou
+ * dispara uma acao registrada no bot (`run`).
+ */
+async function dispatchPanelAction(
+  interaction: ButtonInteraction | StringSelectMenuInteraction,
+  store: CommandStore,
+  action: PanelActionConfig,
+  panelId: string
+): Promise<void> {
+  if (action.type === "reply") {
+    const responseEmbed = new EmbedBuilder().setDescription(action.response || "​");
+    if (action.responseImageUrl) {
+      responseEmbed.setImage(action.responseImageUrl);
+    }
+    if (action.responseColor) {
+      responseEmbed.setColor(action.responseColor as ColorResolvable);
+    }
+    await interaction.reply({ embeds: [responseEmbed], flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  logger.info("panel.action_run", {
+    guildId: interaction.guildId,
+    panelId,
+    actionId: action.actionId,
+    userId: interaction.user.id
+  });
+  await runPanelAction(action.actionId, { interaction, store, params: action.params, panelId });
 }
 
 type CommandStore = Parameters<SlashCommand["execute"]>[1]["store"];
@@ -363,7 +421,13 @@ export const painelCommand: SlashCommand = {
           style: estilo,
           emoji: emoji ?? null,
           responseImageUrl: respostaImagem?.url ?? null,
-          responseColor: respostaCor ?? null
+          responseColor: respostaCor ?? null,
+          action: {
+            type: "reply",
+            response: resposta,
+            responseImageUrl: respostaImagem?.url ?? null,
+            responseColor: respostaCor ?? null
+          }
         });
         logger.info("panel.button_added", { guildId, panelId: id, buttonId, adminUserId: member.id });
         await interaction.reply({ content: `Botao \`${buttonId}\` adicionado ao painel \`${id}\`.`, flags: MessageFlags.Ephemeral });
@@ -394,8 +458,14 @@ export const painelCommand: SlashCommand = {
         await interaction.reply({ content: `Painel \`${id}\` nao encontrado.`, flags: MessageFlags.Ephemeral });
         return;
       }
-      if (panel.buttons.length === 0) {
-        await interaction.reply({ content: `Painel \`${id}\` ainda nao tem botoes.`, flags: MessageFlags.Ephemeral });
+      if (panelIsEmpty(panel)) {
+        await interaction.reply({
+          content:
+            panel.kind === "select"
+              ? `Painel \`${id}\` ainda nao tem opcoes no dropdown.`
+              : `Painel \`${id}\` ainda nao tem botoes.`,
+          flags: MessageFlags.Ephemeral
+        });
         return;
       }
 
@@ -436,7 +506,12 @@ export const painelCommand: SlashCommand = {
 
     await interaction.reply({
       content: panels
-        .map((panel) => `\`${panel.id}\` - ${panel.title} (${panel.buttons.length} botoes)`)
+        .map((panel) => {
+          const count =
+            panel.kind === "select" ? panel.select?.options.length ?? 0 : panel.buttons.length;
+          const unit = panel.kind === "select" ? "opcoes" : "botoes";
+          return `\`${panel.id}\` - ${panel.title} (${count} ${unit})`;
+        })
         .join("\n"),
       flags: MessageFlags.Ephemeral
     });
@@ -461,14 +536,29 @@ export const panelButtonHandler: ButtonHandler = {
       return;
     }
 
-    const responseEmbed = new EmbedBuilder().setDescription(button.response);
-    if (button.responseImageUrl) {
-      responseEmbed.setImage(button.responseImageUrl);
-    }
-    if (button.responseColor) {
-      responseEmbed.setColor(button.responseColor as ColorResolvable);
+    await dispatchPanelAction(interaction, store, button.action, panel.id);
+  }
+};
+
+export const panelSelectHandler: SelectMenuHandler = {
+  customIdPrefix: SELECT_CUSTOM_ID_PREFIX,
+
+  async execute(interaction, { store }) {
+    const guildId = interaction.guildId;
+    if (!guildId) {
+      await interaction.reply({ content: "Este menu so pode ser usado em um servidor.", flags: MessageFlags.Ephemeral });
+      return;
     }
 
-    await interaction.reply({ embeds: [responseEmbed], flags: MessageFlags.Ephemeral });
+    const panelId = interaction.customId.slice(SELECT_CUSTOM_ID_PREFIX.length);
+    const panel = await store.getPanel(guildId, panelId);
+    const selectedId = interaction.values[0];
+    const option = panel?.select?.options.find((item) => item.id === selectedId);
+    if (!panel || !option) {
+      await interaction.reply({ content: "Esta opcao nao esta mais disponivel.", flags: MessageFlags.Ephemeral });
+      return;
+    }
+
+    await dispatchPanelAction(interaction, store, option.action, panel.id);
   }
 };
