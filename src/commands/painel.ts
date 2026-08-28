@@ -6,13 +6,19 @@ import {
   ChannelType,
   Client,
   ColorResolvable,
+  ContainerBuilder,
   EmbedBuilder,
+  MediaGalleryBuilder,
+  MediaGalleryItemBuilder,
+  MessageActionRowComponentBuilder,
   MessageFlags,
   PermissionFlagsBits,
+  resolveColor,
   SlashCommandBuilder,
   StringSelectMenuBuilder,
   StringSelectMenuInteraction,
-  StringSelectMenuOptionBuilder
+  StringSelectMenuOptionBuilder,
+  TextDisplayBuilder
 } from "discord.js";
 import newrelic from "newrelic";
 
@@ -42,15 +48,10 @@ export function panelIsEmpty(panel: PanelConfig): boolean {
     : panel.buttons.length === 0;
 }
 
-export function buildPanelMessage(panel: PanelConfig) {
-  const embed = new EmbedBuilder().setTitle(panel.title).setDescription(panel.description);
-  if (panel.imageUrl) {
-    embed.setImage(panel.imageUrl);
-  }
-  if (panel.color) {
-    embed.setColor(panel.color as ColorResolvable);
-  }
+type PanelComponentRow = ActionRowBuilder<MessageActionRowComponentBuilder>;
 
+/** As linhas de componentes (dropdown OU botoes) — comuns aos dois layouts. */
+function buildPanelComponentRows(panel: PanelConfig): PanelComponentRow[] {
   if (panel.kind === "select" && panel.select && panel.select.options.length > 0) {
     const menu = new StringSelectMenuBuilder()
       .setCustomId(`${SELECT_CUSTOM_ID_PREFIX}${panel.id}`)
@@ -67,31 +68,64 @@ export function buildPanelMessage(panel: PanelConfig) {
           return builder;
         })
       );
-
-    return {
-      embeds: [embed],
-      components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)]
-    };
+    return [new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(menu)];
   }
 
-  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+  const rows: PanelComponentRow[] = [];
   for (let i = 0; i < panel.buttons.length; i += 5) {
     const chunk = panel.buttons.slice(i, i + 5);
-    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      chunk.map((button) => {
-        const builder = new ButtonBuilder()
-          .setCustomId(`${CUSTOM_ID_PREFIX}${panel.id}:${button.id}`)
-          .setLabel(button.label)
-          .setStyle(BUTTON_STYLE_MAP[button.style]);
-        if (button.emoji) {
-          builder.setEmoji(button.emoji);
-        }
-        return builder;
-      })
+    rows.push(
+      new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
+        chunk.map((button) => {
+          const builder = new ButtonBuilder()
+            .setCustomId(`${CUSTOM_ID_PREFIX}${panel.id}:${button.id}`)
+            .setLabel(button.label)
+            .setStyle(BUTTON_STYLE_MAP[button.style]);
+          if (button.emoji) {
+            builder.setEmoji(button.emoji);
+          }
+          return builder;
+        })
+      )
     );
-    rows.push(row);
+  }
+  return rows;
+}
+
+/**
+ * Monta o payload da mensagem do painel. Dois formatos:
+ * - `layout: "embed"` (padrao): `{ embeds: [embed], components }`.
+ * - `layout: "container"`: Components V2 — banner no topo, titulo/descricao
+ *   como texto markdown, e a flag `IsComponentsV2` (sem `embeds`/`content`).
+ */
+export function buildPanelMessage(panel: PanelConfig) {
+  const rows = buildPanelComponentRows(panel);
+
+  if (panel.layout === "container") {
+    const container = new ContainerBuilder();
+    if (panel.color) {
+      container.setAccentColor(resolveColor(panel.color as ColorResolvable));
+    }
+    if (panel.imageUrl) {
+      container.addMediaGalleryComponents(
+        new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(panel.imageUrl))
+      );
+    }
+    const text = panel.description ? `## ${panel.title}\n${panel.description}` : `## ${panel.title}`;
+    container.addTextDisplayComponents(new TextDisplayBuilder().setContent(text));
+    for (const row of rows) {
+      container.addActionRowComponents(row);
+    }
+    return { components: [container], flags: MessageFlags.IsComponentsV2 as const };
   }
 
+  const embed = new EmbedBuilder().setTitle(panel.title).setDescription(panel.description);
+  if (panel.imageUrl) {
+    embed.setImage(panel.imageUrl);
+  }
+  if (panel.color) {
+    embed.setColor(panel.color as ColorResolvable);
+  }
   return { embeds: [embed], components: rows };
 }
 
@@ -151,9 +185,28 @@ async function publishPanelToChannel(
   if (panel.publishedMessageId && panel.publishedChannelId === channelId) {
     const existingMessage = await channel.messages.fetch(panel.publishedMessageId).catch(() => null);
     if (existingMessage) {
-      await existingMessage.edit(payload);
-      await store.setPanelPublishedMessage(panel.guildId, panel.id, channelId, existingMessage.id);
-      return { action: "updated", messageId: existingMessage.id };
+      // A flag `IsComponentsV2` nao pode ser ligada/desligada editando uma
+      // mensagem existente. Se o layout mudou (embed <-> container), apaga a
+      // mensagem antiga e reposta uma nova em vez de editar.
+      const wantsContainer = panel.layout === "container";
+      const isContainerNow = existingMessage.flags.has(MessageFlags.IsComponentsV2);
+      if (wantsContainer === isContainerNow) {
+        await existingMessage.edit(payload);
+        await store.setPanelPublishedMessage(panel.guildId, panel.id, channelId, existingMessage.id);
+        return { action: "updated", messageId: existingMessage.id };
+      }
+
+      await existingMessage.delete().catch(() => undefined);
+      logger.info("panel.layout_reposted", {
+        guildId: panel.guildId,
+        panelId: panel.id,
+        channelId,
+        previousMessageId: existingMessage.id,
+        layout: panel.layout
+      });
+      const repostedMessage = await channel.send(payload);
+      await store.setPanelPublishedMessage(panel.guildId, panel.id, channelId, repostedMessage.id);
+      return { action: "published", messageId: repostedMessage.id };
     }
     logger.warn("panel.published_message_missing", {
       guildId: panel.guildId,

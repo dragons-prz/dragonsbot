@@ -39,6 +39,7 @@ import {
   PanelJob,
   PanelJobStatus,
   PanelKind,
+  PanelLayout,
   PanelSelectConfig,
   Recruitment,
   RecruitmentKind,
@@ -169,6 +170,7 @@ interface PanelDocument {
   imageUrl: string | null;
   color: string | null;
   kind?: PanelKind;
+  layout?: PanelLayout;
   buttons: PanelButtonDocument[];
   select?: PanelSelectDocument | null;
   createdAt: string;
@@ -947,6 +949,7 @@ export class FirestoreDragonsStore implements DragonsStore {
       imageUrl: null,
       color: null,
       kind: "buttons",
+      layout: "embed",
       buttons: [],
       select: null,
       createdAt: now,
@@ -1216,6 +1219,7 @@ export class FirestoreDragonsStore implements DragonsStore {
       imageUrl: data.imageUrl ?? null,
       color: data.color ?? null,
       kind: data.kind ?? "buttons",
+      layout: data.layout ?? "embed",
       buttons: [...data.buttons]
         .sort((a, b) => a.order - b.order)
         .map((button) => this.mapPanelButton(button)),
