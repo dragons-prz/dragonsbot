@@ -535,7 +535,7 @@ async function processVerifyMemberJob(client: Client, store: CommandStore, job: 
   if (updatedEntry) {
     await editMemberEntryCard(client, updatedEntry, recruitMember as GuildMember, {
       title: "Membro verificado diretamente",
-      description: `Verificado por <@${founder.id}>. Credito de recrutamento ainda pode ser solicitado por ate ${config.recruitmentCreditWindowHours}h apos a entrada, se ainda nao houver recrutador creditado.`,
+      description: `Verificado por <@${founder.id}>. Credito de recrutamento ainda pode ser solicitado a qualquer momento, se ainda nao houver recrutador creditado.`,
       color: 0x2f9e44,
       buttonDisabled: true,
       buttonLabel: "Verificado",

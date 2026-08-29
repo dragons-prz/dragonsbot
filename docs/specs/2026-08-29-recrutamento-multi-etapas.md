@@ -21,8 +21,9 @@ Hoje `/recrutar {usuario}`:
 - ao clicar, enfileira `memberActionJobs` (`approve_recruitment`), que aplica
   o cargo de membro + rank base e credita `GuildConfig.recruitmentPoints`
   (valor único) ao recrutador;
-- há uma variante `kind: "credit"` para quem já é membro dentro da janela de
-  `recruitmentCreditWindowHours`.
+- há uma variante `kind: "credit"` para quem já é membro (originalmente
+  restrita a uma janela de `recruitmentCreditWindowHours`; a janela foi
+  removida — ver §8).
 
 O novo fluxo mantém a assinatura (`/recrutar {usuario}`, usuário precisa estar
 no servidor) e troca **tudo depois do enter**:
@@ -738,8 +739,19 @@ Fechada depois da implementação, corrigindo a proposta original:
   **removidas** de `recrutarCommand` (`wizard.ts`) e do espelho delas em
   `processApproveRecruitmentJob` (`recrutar.ts`, que exigia o mesmo antes de
   aplicar os cargos). A mesma pessoa pode ser recrutada mais de uma vez, para
-  áreas diferentes, sem limite de tempo. `recruitmentCreditWindowHours` fica
-  como campo morto no `GuildConfig` — nada mais o lê.
+  áreas diferentes, sem limite de tempo. Cada cargo (de iniciante ou de área)
+  só é adicionado se o recrutado ainda não o tiver — reaplicar `/recrutar`
+  sobre alguém já verificado (que já tem Novato + Dragons Member, por
+  exemplo) não repete nem falha, só pula o que já existe.
+- **Remoção completa de `recruitmentCreditWindowHours` / `credit-window-hours`.**
+  Consequência da decisão acima: como nada mais lê a janela de crédito, o
+  campo foi removido de `GuildConfig` (`domain/types.ts`,
+  `FirestoreDragonsStore.ts`, `NumberConfigKey`), do subcomando
+  `/config set-number` e do espelho em
+  `dragons-platform/shared/src/guild-config.ts` +
+  `guild-config-api.ts` + `SettingsPage.tsx`. Documentos antigos no Firestore
+  continuam com o campo gravado (não migrados), mas nenhum dos dois lados o
+  lê mais — é inofensivo, só ocupa espaço.
 
 Em aberto (proposta + confirmação):
 

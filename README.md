@@ -107,14 +107,13 @@ O fluxo atual envia a aprovacao por DM para todos os membros com cargo `founder`
 | `exit` | registro de saida de membros | `1534735482460831884` |
 | `blacklist` | logs de adicao/remocao da blacklist | `1541992716496273478` |
 
-### `/config set-number tipo:<points|credit-window-hours> valor:<inteiro>`
+### `/config set-number tipo:points valor:<inteiro>`
 
 Configura um parametro numerico do fluxo de recrutamento. Apenas administradores podem usar. Tambem editavel pelo painel.
 
 | tipo | uso | default |
 | --- | --- | --- |
 | `points` | pontos creditados ao recrutador quando um recrutamento e aprovado | `8` |
-| `credit-window-hours` | janela (horas) apos a entrada em que ainda cabe pedir credito de recrutamento | `24` |
 
 ### `/config show`
 

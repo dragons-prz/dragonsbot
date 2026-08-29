@@ -67,10 +67,7 @@ export const configCommand: SlashCommand = {
             .setName("tipo")
             .setDescription("Parametro a ser configurado.")
             .setRequired(true)
-            .addChoices(
-              { name: "Points (pontos por recrutamento)", value: "points" },
-              { name: "Credit window hours (janela de credito, em horas)", value: "credit-window-hours" }
-            )
+            .addChoices({ name: "Points (pontos por recrutamento)", value: "points" })
         )
         .addIntegerOption((option) =>
           option
@@ -166,8 +163,7 @@ export const configCommand: SlashCommand = {
         `Canal blacklist: <#${config.blacklistLogChannelId}> (\`${config.blacklistLogChannelId}\`)`,
         `Canal verification: <#${config.memberVerificationChannelId}> (\`${config.memberVerificationChannelId}\`)`,
         `Canal exit: <#${config.memberExitChannelId}> (\`${config.memberExitChannelId}\`)`,
-        `Pontos por recrutamento: \`${config.recruitmentPoints}\``,
-        `Janela de credito: \`${config.recruitmentCreditWindowHours}h\``
+        `Pontos por recrutamento: \`${config.recruitmentPoints}\``
       ].join("\n"),
       flags: MessageFlags.Ephemeral
     });
