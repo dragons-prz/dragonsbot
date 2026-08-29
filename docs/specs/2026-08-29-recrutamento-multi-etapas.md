@@ -549,6 +549,19 @@ nível superior**, antes do `ContainerBuilder`, no mesmo array `components` da
 mensagem — mensagens Components V2 aceitam múltiplos componentes de nível
 superior, só não aceitam `content`.
 
+O bug acima expôs uma falha de robustez em `postRecruitmentSheet`: quando o
+`channel.send` da ficha falha por qualquer motivo (o bug em si, permissão do
+canal, API do Discord fora do ar), o `recruitments/{id}` já tinha sido criado
+por `createRecruitment` **antes** do envio, e o rascunho não avançava para
+`submitted` — a exceção estourava direto pro handler genérico de interação
+(`"Ocorreu um erro ao processar esta ação."`). Clicar `Confirmar` de novo no
+mesmo rascunho (ainda em `confirming`, não expirado) criaria um **segundo**
+recrutamento duplicado, órfão do primeiro. Corrigido: o `channel.send` agora
+tem seu próprio `try/catch` que desfaz o recrutamento
+(`deletePendingRecruitment`) e devolve `{ ok: false }` com uma mensagem
+retentável, do mesmo jeito que o branch de "canal não encontrado" logo acima
+já fazia — `recruitment.sheet_send_failed` no log.
+
 A função recebe a `RecruitmentMessageConfig` **do snapshot do rascunho**
 (§3.4), nunca da config viva. Por isso o layout de uma mensagem nunca muda
 depois de postada e toda transição de etapa é um `message.edit` — o bot não
@@ -570,6 +583,19 @@ quebrar aprovações que já estão nas DMs dos Founders no momento do deploy.
 Guardas em todo handler do wizard: rascunho existe, `status` compatível com a
 ação, `interaction.user.id === draft.recruiterUserId` (senão responde
 `notDraftOwnerMessage` efêmero) e `expiresAt` não passou.
+
+**[bug corrigido após deploy] Recrutamento órfão trava `/recrutar` para
+sempre.** O plano original (§4.1) esqueceu de portar uma guarda que o
+`recrutarCommand` antigo tinha: um `recruitments/{id}` com `status: "pending"`
+sem `approvalMessageId` era descartado como órfão em vez de bloquear. Sem
+essa guarda, o `pending_exists` de `findPendingRecruitmentByUser` passou a
+bloquear **para sempre** qualquer recrutamento órfão criado por uma falha de
+envio (ver `recruitment.sheet_send_failed` acima) — a própria pessoa que
+sofreu o bug de Components V2 ficou impedida de tentar `/recrutar` de novo,
+mesmo depois do fix. Restaurado em `recrutarCommand`: `pending` sem
+`sheetMessageId` **e** sem `approvalMessageId` (nenhuma ficha, nenhuma DM) é
+apagado silenciosamente (`recruitment.pending_orphan_deleted`) e o comando
+segue normalmente, em vez de bloquear.
 
 ### 4.4 Aprovação e rejeição da ficha
 
@@ -709,7 +735,12 @@ Fecha com `npm run build`.
 `recruitment.draft_role_selected`, `recruitment.draft_areas_selected`,
 `recruitment.draft_back`, `recruitment.draft_restarted`,
 `recruitment.draft_cancelled`, `recruitment.draft_expired`,
+`recruitment.pending_orphan_deleted` (recrutamento "pending" sem ficha nem
+DM, descartado para o `/recrutar` seguinte não ficar bloqueado para sempre),
 `recruitment.sheet_sent`, `recruitment.sheet_channel_not_found`,
+`recruitment.sheet_send_failed` (canal existe mas o envio falhou — permissão,
+API do Discord fora do ar; o recrutamento criado é desfeito para a mesma
+pessoa poder confirmar de novo sem duplicar),
 `recruitment.sheet_blocked` (clique sem cargo aprovador),
 `recruitment.rejected`, `recruitment.area_role_add_failed`,
 `recruitment.starter_role_add_failed`, `recruitment_config.missing`,

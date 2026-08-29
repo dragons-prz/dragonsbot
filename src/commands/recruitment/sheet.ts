@@ -209,9 +209,30 @@ export async function postRecruitmentSheet(
       ? flowConfig.approverRoleIds
       : [];
 
-  const message = await channel.send(
-    await buildSheetMessage(client, recruitment, presentation, "pending", null, mentionRoleIds)
-  );
+  // `createRecruitment` acima ja gravou o registro; se o envio falhar aqui
+  // (permissao do canal, API do Discord fora do ar, etc.), o recrutamento
+  // fica orfao — sem ficha e sem o rascunho avancar para "submitted" — e
+  // clicar Confirmar de novo criaria um SEGUNDO recrutamento duplicado. Por
+  // isso o catch desfaz o registro e devolve um erro que da pra tentar de
+  // novo, em vez de deixar a excecao estourar pro handler generico.
+  let message;
+  try {
+    message = await channel.send(
+      await buildSheetMessage(client, recruitment, presentation, "pending", null, mentionRoleIds)
+    );
+  } catch (error) {
+    await store.deletePendingRecruitment(recruitment.id);
+    logger.error("recruitment.sheet_send_failed", error, {
+      guildId: draft.guildId,
+      draftId: draft.id,
+      recruitmentId: recruitment.id,
+      channelId: flowConfig.sheet.channelId
+    });
+    return {
+      ok: false,
+      message: "Nao consegui postar a ficha agora. Tente confirmar de novo em instantes."
+    };
+  }
 
   await store.setRecruitmentSheetMessage(recruitment.id, message.channelId, message.id);
   const submitted = await store.markRecruitmentDraftSubmitted(draft.id, recruitment.id);
