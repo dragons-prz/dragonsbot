@@ -14,6 +14,7 @@ import { buildRecruitmentMessage } from "./message";
 import {
   buildRecruitmentVars,
   buildSheetSnapshot,
+  NONE_STARTER_ROLE_LABEL,
   selectedAreas,
   selectedRoleLabel
 } from "./wizard";
@@ -166,8 +167,14 @@ export async function postRecruitmentSheet(
   }
 
   const areas = selectedAreas(draft);
-  const roleOption = draft.presentation.starterRoles.find((role) => role.id === draft.starterRoleId);
-  if (!roleOption) {
+  // `starterRoleId === null` e a opcao "Nenhum cargo" da etapa 1 (recrutado
+  // ja tem cargo de rank/iniciante) — legitima, nao e erro. So e erro quando
+  // HAVIA uma escolha e ela sumiu da configuracao entre a etapa 1 e a
+  // confirmacao.
+  const roleOption = draft.starterRoleId
+    ? draft.presentation.starterRoles.find((role) => role.id === draft.starterRoleId)
+    : null;
+  if (draft.starterRoleId && !roleOption) {
     return { ok: false, message: "O cargo escolhido nao existe mais na configuracao." };
   }
 
@@ -182,9 +189,9 @@ export async function postRecruitmentSheet(
     recruitUserId: draft.recruitUserId,
     recruiterUserId: draft.recruiterUserId,
     kind: draft.kind,
-    starterRoleOptionId: roleOption.id,
-    starterRoleId: roleOption.roleId,
-    starterRoleLabel: roleOption.label,
+    starterRoleOptionId: roleOption?.id ?? null,
+    starterRoleId: roleOption?.roleId ?? null,
+    starterRoleLabel: roleOption?.label ?? NONE_STARTER_ROLE_LABEL,
     areaOptionIds: areas.map((area) => area.id),
     areaRoleIds: [...new Set(areas.flatMap((area) => area.roleIds))],
     areaLabels: areas.map((area) => area.label),
@@ -261,8 +268,8 @@ export async function postRecruitmentSheet(
     messageId: message.id,
     recruiterUserId: draft.recruiterUserId,
     recruitUserId: draft.recruitUserId,
-    starterRoleId: roleOption.roleId,
-    starterRoleLabel: roleOption.label,
+    starterRoleId: roleOption?.roleId ?? null,
+    starterRoleLabel: roleOption?.label ?? NONE_STARTER_ROLE_LABEL,
     areaIds: areas.map((area) => area.id),
     areaRoleIds: recruitment.areaRoleIds,
     points,

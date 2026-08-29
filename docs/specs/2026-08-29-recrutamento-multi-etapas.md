@@ -597,6 +597,37 @@ mesmo depois do fix. Restaurado em `recrutarCommand`: `pending` sem
 apagado silenciosamente (`recruitment.pending_orphan_deleted`) e o comando
 segue normalmente, em vez de bloquear.
 
+**[mudança pós-implementação] Etapa 1 aceita "Nenhum cargo".** O plano
+original tratava a etapa 1 como obrigatória: sempre um cargo de iniciante
+dentre os configurados no painel. Na prática, quem já tem um cargo de
+rank/iniciante (ex.: já é "Delusions" de um recrutamento anterior) e está
+sendo trazido para uma área nova (ex.: Suporte) não deveria ser forçado a
+escolher outro — `applyRecruitmentRoles` só *adiciona* cargos, nunca troca,
+então escolher um cargo diferente do que a pessoa já tem duplicaria cargos
+de upamento em vez de substituir.
+
+Corrigido com uma opção fixa, **não configurável pelo painel**, sempre
+adicionada por último no dropdown da etapa 1: `NONE_STARTER_ROLE_ID`
+(`"__none__"`, só existe como `value` do select do Discord) /
+`NONE_STARTER_ROLE_LABEL` (`"Nenhum cargo"`), ambas em `wizard.ts`. Ao
+escolher essa opção, o rascunho grava `starterRoleId: null` — o mesmo valor
+que "ainda não passou pela etapa 1"; a ambiguidade é resolvida pelo
+`status` do rascunho (só sai de `"selecting_role"` depois de uma seleção de
+verdade, real ou "nenhum"), então a UI mostra o texto de pendente enquanto
+`status === "selecting_role"` e "Nenhum cargo" depois disso. Como
+`Recruitment.starterRoleId`/`starterRoleOptionId` já eram `string | null` e
+`applyRecruitmentRoles` já pulava cargos com `roleId` falso, nenhuma outra
+mudança de tipo ou de store foi necessária — só a validação de "confirmar"
+em `recruitmentWizardButtonHandler`, que checava `!draft.starterRoleId` como
+proxy de "etapa 1 concluída" (quebrava com "Nenhum cargo", que é `null`
+legítimo) e passou a checar `draft.status !== "confirming"`.
+
+Por ser uma opção estrutural do bot (evitar duplicar cargo), não um texto de
+conteúdo, o label ficou fixo em português no código em vez de virar mais um
+campo em `RecruitmentFlowConfig` — decisão de escopo, não limitação técnica;
+dá pra promover a configurável depois se um dia precisar de outro idioma ou
+texto.
+
 ### 4.4 Aprovação e rejeição da ficha
 
 `recsheet:approve` reaproveita a infra atual: valida `approverRoleIds` →
