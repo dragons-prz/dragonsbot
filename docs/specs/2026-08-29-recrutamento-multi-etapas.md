@@ -718,12 +718,32 @@ Fechadas:
   ficha (snapshot no recrutamento): mudança no painel vale só para
   recrutamentos novos, e nada é reposto.
 
+Fechada depois da implementação, corrigindo a proposta original:
+
+- **Fluxo de crédito (`kind: "credit"`), sem guardas.** A proposta original
+  mantinha, para quem já é membro, as mesmas guardas do fluxo antigo: exigir
+  uma `MemberEntry` registrada pelo bot, dentro de uma janela de tempo
+  (`recruitmentCreditWindowHours`), sem recrutador já creditado. Na prática
+  isso bloqueava exatamente o caso que o fluxo novo existe para cobrir:
+  recrutar alguém que **já está no servidor** para uma área nova (ex.:
+  `Recrutamento`, `Passtime`), sem ser a família — produzindo a mensagem
+  "Este usuario ja e membro e nao possui entrada recente registrada pelo bot
+  para credito." mesmo sem nenhum problema real.
+
+  A aprovação de uma ficha já exige um humano da gerência clicando
+  `Confirmar` — isso substitui qualquer necessidade de janela de tempo ou de
+  histórico de entrada como trava anti-abuso. Corrigido: `kind` continua
+  computado (`"credit"` quando já é membro, só para rótulo/anúncio), mas as
+  três guardas (`!memberEntry`, janela expirada, já creditado/pendente) foram
+  **removidas** de `recrutarCommand` (`wizard.ts`) e do espelho delas em
+  `processApproveRecruitmentJob` (`recrutar.ts`, que exigia o mesmo antes de
+  aplicar os cargos). A mesma pessoa pode ser recrutada mais de uma vez, para
+  áreas diferentes, sem limite de tempo. `recruitmentCreditWindowHours` fica
+  como campo morto no `GuildConfig` — nada mais o lê.
+
 Em aberto (proposta + confirmação):
 
-1. **Fluxo de crédito (`kind: "credit"`).** Proposta: manter, passando pelo
-   mesmo wizard — roles já presentes não são readicionadas, e as guardas de
-   janela/crédito já creditado continuam na entrada do comando.
-2. **Recrutamentos pendentes na virada.** Proposta: não migrar. O handler
+1. **Recrutamentos pendentes na virada.** Proposta: não migrar. O handler
    `recruitment:approve:` continua registrado até drenarem; remover depois.
 3. **Cargos aprovadores × Founder.** `approverRoleIds` é a nova fonte de
    verdade da ficha; `founderRoleId` continua governando `/verificar` e a fila

@@ -135,10 +135,12 @@ Regras de entrada:
 - o usuario nao pode estar na blacklist
 - nao pode existir outro recrutamento pendente para o mesmo usuario
 
-Se o usuario ja tem o cargo `member`, o recrutamento vira um pedido de credito, com
-as mesmas regras de antes: entrada registrada pelo bot, dentro da janela
-(`credit-window-hours`, default 24h), sem recrutador ja creditado e sem outro
-pedido pendente.
+Se o usuario ja tem o cargo `member`, o recrutamento continua funcionando —
+por exemplo para recruta-lo para uma area nova (`Recrutamento`, `Passtime`,
+`Suporte`), sem ser a familia. Nao ha janela de tempo nem exigencia de entrada
+registrada pelo bot: a aprovacao da gerencia na ficha e a unica trava, e a
+mesma pessoa pode ser recrutada mais de uma vez, para areas diferentes, sem
+limite.
 
 As etapas, na mensagem publica do canal (so o autor opera os componentes):
 
@@ -194,7 +196,7 @@ O botao so pode ser usado por Founders. Ao clicar, o bot coloca a verificacao na
 
 Se um recrutador usar `/recrutar` antes da verificacao direta, o card vira `Recrutamento pendente` e o botao de verificacao direta e desativado.
 
-Se um recrutador usar `/recrutar` depois da verificacao direta, dentro da janela de credito (`credit-window-hours`, default 24h), o card vira `Credito de recrutamento pendente`. Quando um Founder aprovar, o recrutador recebe pontos e o card vira `Credito de recrutamento aprovado`.
+Se um recrutador usar `/recrutar` depois da verificacao direta — a qualquer momento, sem janela de tempo — o card vira `Credito de recrutamento pendente`. Quando a ficha for aprovada, o recrutador recebe os pontos e o card vira `Credito de recrutamento aprovado`.
 
 ## Saidas
 
@@ -528,7 +530,7 @@ Checklist manual recomendado:
 - recrutar com cargo correto e confirmar DM para Founders
 - verificar com Founder e confirmar cargo de membro + rank base sem pontos para ninguem
 - confirmar que novo membro gera card no canal de verificacao
-- confirmar que `/recrutar` para membro verificado dentro da janela de credito (default 24h) gera pedido de credito
+- confirmar que `/recrutar` para um membro ja verificado (sem limite de tempo) gera pedido de credito, inclusive para uma area diferente da familia
 - confirmar que segundo pedido de credito para o mesmo membro e bloqueado
 - usar `/pontos` e confirmar a pontuacao atual
 - usar `/ranking` e confirmar a ordenacao por pontos/recrutamentos

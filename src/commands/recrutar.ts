@@ -345,10 +345,6 @@ export async function announceMemberExit(member: GuildMember | PartialGuildMembe
   });
 }
 
-function isCreditWindowOpen(entry: MemberEntry, windowHours: number) {
-  return Date.now() - new Date(entry.joinedAt).getTime() <= windowHours * 60 * 60 * 1000;
-}
-
 /**
  * Aplica os cargos escolhidos no wizard: o cargo de iniciante e os cargos de
  * cada area. Cada `roles.add` e independente — falha de um cargo vira log e
@@ -610,35 +606,22 @@ async function processApproveRecruitmentJob(client: Client, store: CommandStore,
   }
   const recruiterMember = await guild.members.fetch(recruitment.recruiterUserId).catch(() => null);
 
-  const entry = await store.getMemberEntry(job.guildId, recruitment.recruitUserId);
-  if (recruitment.kind === "credit") {
-    if (!entry) {
-      await store.cancelMemberActionJob(job.id, "Entrada do membro nao encontrada para aprovar credito.");
-      return;
-    }
-
-    if (entry.creditedAt && entry.recruitmentId !== recruitment.id) {
-      await store.cancelMemberActionJob(job.id, "Membro ja possui credito de recrutamento aprovado.");
-      return;
-    }
-
-    if (!recruitMember.roles.cache.has(config.memberRoleId)) {
-      await store.cancelMemberActionJob(job.id, "Credito posterior so pode ser aprovado para membro ja verificado.");
-      return;
-    }
-  } else {
-    const applied = await applyMemberRoles(
-      job.guildId,
-      recruitMember as GuildMember,
-      founder,
-      config.memberRoleId,
-      store,
-      `Recrutamento aprovado por ${founder.user.tag}`,
-      { source: job.id, recruitmentId: recruitment.id }
-    );
-    if (!applied.ok) {
-      throw new Error(applied.message);
-    }
+  // Idempotente (so adiciona o cargo/rank que falta), entao serve tanto para
+  // quem esta entrando pela primeira vez quanto para quem ja e membro e esta
+  // sendo recrutado de novo para uma area nova. Sem restricao de janela de
+  // tempo nem exigencia de entrada registrada — a aprovacao da gerencia na
+  // ficha ja e a trava.
+  const applied = await applyMemberRoles(
+    job.guildId,
+    recruitMember as GuildMember,
+    founder,
+    config.memberRoleId,
+    store,
+    `Recrutamento aprovado por ${founder.user.tag}`,
+    { source: job.id, recruitmentId: recruitment.id }
+  );
+  if (!applied.ok) {
+    throw new Error(applied.message);
   }
 
   // Pontos congelados no envio da ficha (soma das areas) — inclusive quando
