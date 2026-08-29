@@ -37,7 +37,8 @@ export async function buildSheetMessage(
   recruitment: Recruitment,
   presentation: RecruitmentSheetSnapshot,
   state: SheetState,
-  approverId: string | null
+  approverId: string | null,
+  mentionRoleIds: string[] = []
 ) {
   const [recruitUser, recruiterUser] = await Promise.all([
     client.users.fetch(recruitment.recruitUserId),
@@ -102,7 +103,8 @@ export async function buildSheetMessage(
     vars,
     buttons,
     avatarUrl: recruitUser.displayAvatarURL({ size: 256 }),
-    avatarPlacement: presentation.avatarPlacement
+    avatarPlacement: presentation.avatarPlacement,
+    mentionRoleIds
   });
 }
 
@@ -202,17 +204,14 @@ export async function postRecruitmentSheet(
     return { ok: false, message: "Nao encontrei o canal das fichas configurado no painel." };
   }
 
-  const mention =
+  const mentionRoleIds =
     presentation.mentionApprovers && flowConfig.approverRoleIds.length > 0
-      ? flowConfig.approverRoleIds.map((roleId) => `<@&${roleId}>`).join(" ")
-      : undefined;
+      ? flowConfig.approverRoleIds
+      : [];
 
-  const message = await channel.send({
-    ...(mention
-      ? { content: mention, allowedMentions: { roles: flowConfig.approverRoleIds } }
-      : {}),
-    ...(await buildSheetMessage(client, recruitment, presentation, "pending", null))
-  });
+  const message = await channel.send(
+    await buildSheetMessage(client, recruitment, presentation, "pending", null, mentionRoleIds)
+  );
 
   await store.setRecruitmentSheetMessage(recruitment.id, message.channelId, message.id);
   const submitted = await store.markRecruitmentDraftSubmitted(draft.id, recruitment.id);

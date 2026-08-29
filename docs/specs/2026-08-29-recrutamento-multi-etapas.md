@@ -536,6 +536,19 @@ duas saídas:
 `SectionBuilder`/`ThumbnailBuilder` ainda não são usados no repo — são do mesmo
 namespace de `ContainerBuilder` no discord.js já instalado.
 
+**[bug corrigido após deploy] Menção dos aprovadores × Components V2.** A
+ficha marca `approverRoleIds` via `content` quando `mentionApprovers` está
+ligado — mas o Discord rejeita **qualquer** `content` numa mensagem com
+`MessageFlags.IsComponentsV2`
+(`DiscordAPIError[50035]: content[MESSAGE_CANNOT_USE_LEGACY_FIELDS_WITH_COMPONENTS_V2]`),
+o que quebrava a confirmação de qualquer recrutamento cuja ficha usasse
+layout `container` (o default). `buildRecruitmentMessage` ganhou
+`mentionRoleIds`: no `embed` continua virando `content` +
+`allowedMentions.roles`; no `container` vira um `TextDisplayBuilder` **de
+nível superior**, antes do `ContainerBuilder`, no mesmo array `components` da
+mensagem — mensagens Components V2 aceitam múltiplos componentes de nível
+superior, só não aceitam `content`.
+
 A função recebe a `RecruitmentMessageConfig` **do snapshot do rascunho**
 (§3.4), nunca da config viva. Por isso o layout de uma mensagem nunca muda
 depois de postada e toda transição de etapa é um `message.edit` — o bot não
