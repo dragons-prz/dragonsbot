@@ -49,6 +49,12 @@ FIREBASE_SERVICE_ACCOUNT_PATH=/caminho/seguro/service-account.json
 
 ## Registrar comandos
 
+Em producao (Docker/VPS), o `docker-compose.yml` roda `deploy-commands` a
+cada `docker compose up` antes de subir o bot — nenhum passo manual e
+necessario apos um deploy que muda comando.
+
+Em desenvolvimento local (fora do Docker):
+
 ```bash
 npm run deploy:commands
 ```
