@@ -149,7 +149,10 @@ limite.
 
 As etapas, na mensagem publica do canal (so o autor opera os componentes):
 
-1. **Cargo de iniciante** — dropdown com as opcoes cadastradas no painel; botao `Cancelar`.
+1. **Cargo de iniciante** — dropdown com as opcoes cadastradas no painel mais
+   uma opcao fixa **"Nenhum cargo"** (para quem ja tem um cargo de
+   rank/iniciante — ex.: trazer pra area de Suporte quem ja e "Delusions" —
+   sem duplicar cargo de upamento); botao `Cancelar`.
 2. **Areas** — dropdown de multipla escolha (minimo e maximo configuraveis); botoes `Voltar` e `Cancelar`.
 3. **Confirmacao** — resumo do que foi escolhido; botoes `Confirmar`, `Reiniciar` e `Cancelar`.
 
@@ -328,7 +331,8 @@ escritas) e o bot:
 
 - muda o recrutamento para `approved`
 - aplica o cargo `member` e o rank base
-- aplica o cargo de iniciante escolhido e os cargos de todas as areas escolhidas
+- aplica o cargo de iniciante escolhido (nenhum, se a etapa 1 usou "Nenhum
+  cargo") e os cargos de todas as areas escolhidas
 - credita ao recrutador os pontos congelados na ficha (soma dos pontos das areas,
   ou o maior deles se `pointsMode` for `highest`)
 - sincroniza o cargo de rank do recrutador e manda DM quando ele sobe

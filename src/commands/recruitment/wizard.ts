@@ -25,6 +25,18 @@ const TOTAL_STEPS = 3;
 /** Rede de seguranca dos rascunhos abandonados (o TTL de cada um vem da config). */
 const DRAFT_EXPIRY_TICK_MS = 60_000;
 
+/**
+ * Opcao fixa (nao configuravel pelo painel) que aparece sempre por ultimo no
+ * dropdown da etapa 1. Cobre o caso de recrutar alguem que ja tem um cargo
+ * de rank/iniciante — ex.: trazer para a area de Suporte quem ja e
+ * "Delusions" — sem forcar a escolha de outro cargo (que so duplicaria
+ * cargos de upamento sem remover o antigo). So existe como `value` do select
+ * do Discord; no rascunho, escolher esta opcao grava `starterRoleId: null`,
+ * igual a nunca ter tido cargo de iniciante nenhum.
+ */
+const NONE_STARTER_ROLE_ID = "__none__";
+export const NONE_STARTER_ROLE_LABEL = "Nenhum cargo";
+
 type WizardAction = "role" | "areas" | "back" | "cancel" | "restart" | "confirm";
 
 function customId(action: WizardAction, draftId: string): string {
@@ -173,11 +185,19 @@ async function draftVars(
     client.users.fetch(draft.recruiterUserId)
   ]);
   const areas = selectedAreas(draft);
+  // `starterRoleId` null tem dois significados: "ainda nao passou pela
+  // etapa 1" (mostra o texto de pendente) ou "escolheu Nenhum cargo"
+  // explicitamente (mostra isso). O status desambigua: so sai de
+  // "selecting_role" depois de uma selecao de verdade.
+  const roleLabel =
+    draft.status === "selecting_role"
+      ? draft.presentation.rolePendingText
+      : (selectedRoleLabel(draft) ?? NONE_STARTER_ROLE_LABEL);
   return buildRecruitmentVars({
     step,
     recruitUser,
     recruiterUser,
-    roleLabel: selectedRoleLabel(draft) ?? draft.presentation.rolePendingText,
+    roleLabel,
     areasLabel:
       areas.length > 0
         ? areas.map((area) => area.label).join(", ")
@@ -193,6 +213,15 @@ export async function buildStepMessage(client: Client, draft: RecruitmentDraft) 
   const presentation = draft.presentation;
 
   if (draft.status === "selecting_role") {
+    // Discord aceita no maximo 25 opcoes por select — corta a lista
+    // configurada no painel pra sempre sobrar espaco pra opcao fixa "Nenhum
+    // cargo" (ver NONE_STARTER_ROLE_ID).
+    const noneOption = {
+      id: NONE_STARTER_ROLE_ID,
+      label: NONE_STARTER_ROLE_LABEL,
+      description: "O recrutado ja tem um cargo de iniciante/rank — nao aplicar outro.",
+      emoji: null
+    };
     return buildRecruitmentMessage({
       message: presentation.stepOne.message,
       vars: await draftVars(client, draft, 1),
@@ -201,7 +230,7 @@ export async function buildStepMessage(client: Client, draft: RecruitmentDraft) 
         placeholder: presentation.stepOne.select.placeholder,
         minValues: 1,
         maxValues: 1,
-        options: presentation.starterRoles,
+        options: [...presentation.starterRoles.slice(0, 24), noneOption],
         selectedIds: draft.starterRoleId ? [draft.starterRoleId] : []
       },
       buttons: [
@@ -458,7 +487,8 @@ export const recruitmentWizardSelectHandler: SelectMenuHandler = {
     const { store } = context;
 
     if (action === "role") {
-      const starterRoleId = interaction.values[0];
+      const rawValue = interaction.values[0];
+      const starterRoleId = rawValue === NONE_STARTER_ROLE_ID ? null : rawValue;
       const updated = await store.updateRecruitmentDraftSelection(draft.id, {
         starterRoleId,
         status: "selecting_areas"
@@ -576,7 +606,10 @@ export const recruitmentWizardButtonHandler: ButtonHandler = {
     }
 
     if (action === "confirm") {
-      if (!draft.starterRoleId || draft.areaIds.length === 0) {
+      // `starterRoleId` pode ser legitimamente `null` (opcao "Nenhum cargo"
+      // da etapa 1) — o `status` e que garante que as duas etapas ja foram
+      // percorridas, nao a presenca de um cargo escolhido.
+      if (draft.status !== "confirming" || draft.areaIds.length === 0) {
         await interaction.reply({
           content: "Escolha o cargo e as areas antes de confirmar.",
           flags: MessageFlags.Ephemeral
