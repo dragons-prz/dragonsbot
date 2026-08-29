@@ -157,8 +157,15 @@ As etapas, na mensagem publica do canal (so o autor opera os componentes):
 3. **Confirmacao** — resumo do que foi escolhido; botoes `Confirmar`, `Reiniciar` e `Cancelar`.
 
 `Voltar` volta a etapa 1 mantendo as escolhas; `Reiniciar` zera as selecoes;
-`Cancelar` encerra. Um rascunho abandonado expira sozinho (`draftTtlMinutes`,
-default 15 min) e a mensagem e trocada pelo texto de expiracao.
+`Cancelar` encerra.
+
+**Os desfechos do wizard sao privados.** Enquanto as tres etapas ficam visiveis
+para o canal, ao **enviar** ou **cancelar** o bot apaga a mensagem publica do
+wizard e responde so ao recrutador (mensagem "Apenas para voce") com o texto
+`outcome.submitted` / `outcome.cancelled`. Um rascunho abandonado expira sozinho
+(`draftTtlMinutes`, default 15 min): a mensagem publica e apenas apagada, sem
+aviso — o worker de expiracao roda sem interacao e nao tem como responder de
+forma privada, entao `outcome.expired` fica configurado mas nao e renderizado.
 
 Ao confirmar, o bot posta a **ficha** no canal configurado, com a foto do
 recrutado, recrutador, cargo, areas, data de criacao da conta e os botoes
@@ -362,7 +369,10 @@ O documento `recruitmentConfigs/{guildId}` e escrito **so** pela
   aprovada, rejeitada), botoes, posicao da foto e se marca os aprovadores.
 - `stepOne` / `stepTwo` / `stepThree` / `outcome`: uma `RecruitmentMessageConfig`
   por mensagem (layout `embed`/`container`, titulo, texto, cor, imagem) e os
-  botoes de cada etapa (texto, emoji e cor).
+  botoes de cada etapa (texto, emoji e cor). `outcome.submitted` e
+  `outcome.cancelled` sao enviados so ao recrutador (mensagem "Apenas para
+  voce"); `outcome.expired` fica configurado mas nao e renderizado (a mensagem
+  publica so e apagada ao expirar).
 - `approverRoleIds`, `pointsGrantRoleIds`, `minManualPoints`/`maxManualPoints`,
   `draftTtlMinutes` e os textos avulsos (placeholders e mensagens de bloqueio).
 
