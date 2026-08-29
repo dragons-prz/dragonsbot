@@ -21,8 +21,9 @@ Hoje `/recrutar {usuario}`:
 - ao clicar, enfileira `memberActionJobs` (`approve_recruitment`), que aplica
   o cargo de membro + rank base e credita `GuildConfig.recruitmentPoints`
   (valor único) ao recrutador;
-- há uma variante `kind: "credit"` para quem já é membro dentro da janela de
-  `recruitmentCreditWindowHours`.
+- há uma variante `kind: "credit"` para quem já é membro (originalmente
+  restrita a uma janela de `recruitmentCreditWindowHours`; a janela foi
+  removida — ver §8).
 
 O novo fluxo mantém a assinatura (`/recrutar {usuario}`, usuário precisa estar
 no servidor) e troca **tudo depois do enter**:
@@ -535,6 +536,19 @@ duas saídas:
 `SectionBuilder`/`ThumbnailBuilder` ainda não são usados no repo — são do mesmo
 namespace de `ContainerBuilder` no discord.js já instalado.
 
+**[bug corrigido após deploy] Menção dos aprovadores × Components V2.** A
+ficha marca `approverRoleIds` via `content` quando `mentionApprovers` está
+ligado — mas o Discord rejeita **qualquer** `content` numa mensagem com
+`MessageFlags.IsComponentsV2`
+(`DiscordAPIError[50035]: content[MESSAGE_CANNOT_USE_LEGACY_FIELDS_WITH_COMPONENTS_V2]`),
+o que quebrava a confirmação de qualquer recrutamento cuja ficha usasse
+layout `container` (o default). `buildRecruitmentMessage` ganhou
+`mentionRoleIds`: no `embed` continua virando `content` +
+`allowedMentions.roles`; no `container` vira um `TextDisplayBuilder` **de
+nível superior**, antes do `ContainerBuilder`, no mesmo array `components` da
+mensagem — mensagens Components V2 aceitam múltiplos componentes de nível
+superior, só não aceitam `content`.
+
 A função recebe a `RecruitmentMessageConfig` **do snapshot do rascunho**
 (§3.4), nunca da config viva. Por isso o layout de uma mensagem nunca muda
 depois de postada e toda transição de etapa é um `message.edit` — o bot não
@@ -738,8 +752,19 @@ Fechada depois da implementação, corrigindo a proposta original:
   **removidas** de `recrutarCommand` (`wizard.ts`) e do espelho delas em
   `processApproveRecruitmentJob` (`recrutar.ts`, que exigia o mesmo antes de
   aplicar os cargos). A mesma pessoa pode ser recrutada mais de uma vez, para
-  áreas diferentes, sem limite de tempo. `recruitmentCreditWindowHours` fica
-  como campo morto no `GuildConfig` — nada mais o lê.
+  áreas diferentes, sem limite de tempo. Cada cargo (de iniciante ou de área)
+  só é adicionado se o recrutado ainda não o tiver — reaplicar `/recrutar`
+  sobre alguém já verificado (que já tem Novato + Dragons Member, por
+  exemplo) não repete nem falha, só pula o que já existe.
+- **Remoção completa de `recruitmentCreditWindowHours` / `credit-window-hours`.**
+  Consequência da decisão acima: como nada mais lê a janela de crédito, o
+  campo foi removido de `GuildConfig` (`domain/types.ts`,
+  `FirestoreDragonsStore.ts`, `NumberConfigKey`), do subcomando
+  `/config set-number` e do espelho em
+  `dragons-platform/shared/src/guild-config.ts` +
+  `guild-config-api.ts` + `SettingsPage.tsx`. Documentos antigos no Firestore
+  continuam com o campo gravado (não migrados), mas nenhum dos dois lados o
+  lê mais — é inofensivo, só ocupa espaço.
 
 Em aberto (proposta + confirmação):
 

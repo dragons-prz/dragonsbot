@@ -39,7 +39,7 @@ npm install                    # instalar dependências
 npm run dev                    # rodar em desenvolvimento (tsx watch)
 npm run build                  # compilar TypeScript -> dist/
 npm start                      # rodar build de produção (precisa de npm run build antes)
-npm run deploy:commands        # registrar/atualizar comandos slash no Discord
+npm run deploy:commands        # registrar/atualizar comandos slash no Discord (automatico no docker-compose, so precisa rodar a mao fora do Docker)
 npm run migrate:firestore-members  # migração one-off de recruiterPoints -> members
 ```
 

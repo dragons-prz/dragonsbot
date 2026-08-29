@@ -60,6 +60,14 @@ export interface BuildRecruitmentMessageInput {
   /** URL da foto do recrutado; so e usada quando `avatarPlacement` pede. */
   avatarUrl?: string | null;
   avatarPlacement?: RecruitmentAvatarPlacement;
+  /**
+   * Mencao de cargo(s) a destacar (ex.: avisar os aprovadores). O Discord
+   * proibe o campo `content` em mensagens Components V2
+   * (`MESSAGE_CANNOT_USE_LEGACY_FIELDS_WITH_COMPONENTS_V2`), entao no layout
+   * `container` isso vira um `TextDisplay` extra no topo da mensagem em vez
+   * de `content`; no `embed` continua sendo `content` normalmente.
+   */
+  mentionRoleIds?: string[];
 }
 
 function buildButtonRows(buttons: RecruitmentButtonSpec[]) {
@@ -141,6 +149,9 @@ export function buildRecruitmentMessage(input: BuildRecruitmentMessageInput) {
     ...(input.select ? [buildSelectRow(input.select)] : []),
     ...buildButtonRows(input.buttons ?? [])
   ];
+  const mentionRoleIds = input.mentionRoleIds ?? [];
+  const mentionText = mentionRoleIds.map((roleId) => `<@&${roleId}>`).join(" ");
+  const allowedMentions = mentionRoleIds.length > 0 ? { roles: mentionRoleIds } : undefined;
 
   if (message.layout === "container") {
     const container = new ContainerBuilder();
@@ -170,7 +181,17 @@ export function buildRecruitmentMessage(input: BuildRecruitmentMessageInput) {
       container.addActionRowComponents(row);
     }
 
-    return { components: [container], flags: MessageFlags.IsComponentsV2 as const };
+    // `content` nao existe em Components V2 — a mencao vira um TextDisplay
+    // de nivel superior, antes do container, na mesma mensagem.
+    const topLevelComponents = mentionText
+      ? [new TextDisplayBuilder().setContent(mentionText), container]
+      : [container];
+
+    return {
+      components: topLevelComponents,
+      flags: MessageFlags.IsComponentsV2 as const,
+      ...(allowedMentions ? { allowedMentions } : {})
+    };
   }
 
   const embed = new EmbedBuilder().setTitle(title).setDescription(description).setTimestamp();
@@ -185,5 +206,9 @@ export function buildRecruitmentMessage(input: BuildRecruitmentMessageInput) {
     embed.setImage(imageUrl);
   }
 
-  return { embeds: [embed], components: rows };
+  return {
+    embeds: [embed],
+    components: rows,
+    ...(mentionText ? { content: mentionText, allowedMentions } : {})
+  };
 }

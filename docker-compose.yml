@@ -7,3 +7,11 @@ services:
       - .env
     volumes:
       - ./firebase-service-account.json:/app/firebase-service-account.json:ro
+    # Reregistra os comandos slash a cada deploy/restart antes de subir o
+    # bot, para nunca esquecer `npm run deploy:commands` depois de um PR que
+    # muda comando (ex.: /pontos-dar). Idempotente — o PUT do Discord
+    # substitui a lista inteira, entao rodar de novo com o mesmo conjunto
+    # nao tem efeito. Se registrar falhar (credenciais invalidas), o
+    # container nem sobe: e o mesmo problema que faria o login do bot falhar
+    # de qualquer forma, entao falhar cedo e alto e preferivel a silenciar.
+    command: sh -c "node dist/deploy-commands.js && node dist/index.js"
