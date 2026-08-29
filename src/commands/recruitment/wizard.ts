@@ -335,17 +335,32 @@ export const recrutarCommand: SlashCommand = {
 
     const pending = await store.findPendingRecruitmentByUser(guildId, recruitUser.id);
     if (pending) {
-      logger.warn("recruitment.draft_blocked", {
-        reason: "pending_exists",
-        guildId,
-        recruitmentId: pending.id,
-        recruiterUserId: recruiter.id,
-        recruitUserId: recruitUser.id
-      });
-      await interaction.editReply(
-        `Ja existe um recrutamento pendente para este usuario (#${pending.id}).`
-      );
-      return;
+      // Um recrutamento "pending" sem ficha nem DM (fluxo legado) e orfao —
+      // sobrou de uma falha no envio antes do registro avancar (ver
+      // recruitment.sheet_send_failed). Bloquear pra sempre travaria um
+      // usuario que nunca teve chance de ser aprovado ou rejeitado; melhor
+      // descartar e seguir com o /recrutar normalmente.
+      if (!pending.sheetMessageId && !pending.approvalMessageId) {
+        logger.warn("recruitment.pending_orphan_deleted", {
+          guildId,
+          recruitmentId: pending.id,
+          recruiterUserId: recruiter.id,
+          recruitUserId: recruitUser.id
+        });
+        await store.deletePendingRecruitment(pending.id);
+      } else {
+        logger.warn("recruitment.draft_blocked", {
+          reason: "pending_exists",
+          guildId,
+          recruitmentId: pending.id,
+          recruiterUserId: recruiter.id,
+          recruitUserId: recruitUser.id
+        });
+        await interaction.editReply(
+          `Ja existe um recrutamento pendente para este usuario (#${pending.id}).`
+        );
+        return;
+      }
     }
 
     // Quem ja e membro tambem pode ser recrutado de novo — por exemplo para
