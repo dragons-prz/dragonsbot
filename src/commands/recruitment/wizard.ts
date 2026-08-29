@@ -269,17 +269,27 @@ export async function buildStepMessage(client: Client, draft: RecruitmentDraft) 
   });
 }
 
-/** Mensagem final do wizard (sem componentes). */
+/**
+ * Mensagem final do wizard (sem componentes). Os desfechos sao PRIVADOS: a
+ * mensagem publica do wizard e apagada e este texto vai como resposta "Apenas
+ * para voce" ao recrutador — por isso o flag `Ephemeral`. O desfecho `expired`
+ * roda num worker sem interacao, entao nao passa por aqui: la a mensagem
+ * publica so some (ver `startRecruitmentDraftExpiryWorker`).
+ */
 async function buildOutcomeMessage(
   client: Client,
   draft: RecruitmentDraft,
-  outcome: "submitted" | "cancelled" | "expired"
+  outcome: "submitted" | "cancelled"
 ) {
-  return buildRecruitmentMessage({
+  const payload = buildRecruitmentMessage({
     message: draft.presentation.outcome[outcome],
     vars: await draftVars(client, draft, TOTAL_STEPS),
     buttons: []
   });
+  // `container` ja traz `IsComponentsV2`; some o `Ephemeral` por cima sem
+  // perder o outro flag.
+  const baseFlags = "flags" in payload ? payload.flags : 0;
+  return { ...payload, flags: baseFlags | MessageFlags.Ephemeral };
 }
 
 export const recrutarCommand: SlashCommand = {
@@ -567,7 +577,10 @@ export const recruitmentWizardButtonHandler: ButtonHandler = {
         recruiterUserId: draft.recruiterUserId,
         recruitUserId: draft.recruitUserId
       });
-      await interaction.update(await buildOutcomeMessage(interaction.client, cancelled, "cancelled"));
+      // Desfecho privado: some a mensagem publica do wizard e o texto de
+      // cancelamento vai so para o recrutador.
+      await interaction.reply(await buildOutcomeMessage(interaction.client, cancelled, "cancelled"));
+      await interaction.message.delete().catch(() => undefined);
       return;
     }
 
@@ -624,9 +637,12 @@ export const recruitmentWizardButtonHandler: ButtonHandler = {
         return;
       }
 
-      await interaction.editReply(
+      // Desfecho privado: some a mensagem publica do wizard e o "Recrutamento
+      // enviado" vai so para o recrutador.
+      await interaction.followUp(
         await buildOutcomeMessage(interaction.client, submitted.draft, "submitted")
       );
+      await interaction.message.delete().catch(() => undefined);
       return;
     }
 
@@ -635,8 +651,11 @@ export const recruitmentWizardButtonHandler: ButtonHandler = {
 };
 
 /**
- * Fecha rascunhos abandonados: marca `expired` e troca a mensagem do wizard
- * pelo texto configurado, para nao ficar um dropdown vivo que nao responde.
+ * Fecha rascunhos abandonados: marca `expired` e APAGA a mensagem publica do
+ * wizard, para nao ficar um dropdown vivo que nao responde. Roda num worker
+ * sem interacao, entao nao ha como avisar o recrutador de forma privada — o
+ * desfecho de expiracao some em silencio (a config `outcome.expired`
+ * continua existindo mas nao e mais renderizada aqui).
  */
 export function startRecruitmentDraftExpiryWorker(
   client: Client,
@@ -662,7 +681,7 @@ export function startRecruitmentDraftExpiryWorker(
           continue;
         }
         const message = await channel.messages.fetch(draft.messageId);
-        await message.edit(await buildOutcomeMessage(client, draft, "expired"));
+        await message.delete();
       } catch (error) {
         logger.error("recruitment.draft_expire_edit_failed", error, {
           guildId: draft.guildId,
