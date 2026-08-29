@@ -122,34 +122,46 @@ Mostra a configuracao atual de cargos, canais e parametros numericos do servidor
 
 ### `/recrutar usuario:<membro>`
 
-Cria uma ficha de recrutamento pendente.
+Abre o recrutamento em 3 etapas no proprio canal onde o comando foi usado. Toda a
+configuracao do fluxo (cargos, areas, canais, textos, botoes, emojis, pontuacao)
+vem do painel `dragons-platform`, nao de comando do bot — ver "Configuracao do
+recrutamento" abaixo.
 
-Regras:
+Regras de entrada:
 
 - quem usa o comando precisa ter o cargo `recruiter`
+- o fluxo precisa estar configurado no painel (cargos de iniciante, areas e canal da ficha)
 - o usuario precisa estar no servidor
 - o usuario nao pode estar na blacklist
 - nao pode existir outro recrutamento pendente para o mesmo usuario
-- precisa existir pelo menos um Founder com DM aberta para receber a aprovacao
 
-Se o usuario ainda nao tem o cargo `member`, o fluxo e o recrutamento normal.
+Se o usuario ja tem o cargo `member`, o recrutamento vira um pedido de credito, com
+as mesmas regras de antes: entrada registrada pelo bot, dentro da janela
+(`credit-window-hours`, default 24h), sem recrutador ja creditado e sem outro
+pedido pendente.
 
-Se o usuario ja tem o cargo `member`, o comando vira um pedido de credito de recrutamento. Esse pedido so e aceito quando:
+As etapas, na mensagem publica do canal (so o autor opera os componentes):
 
-- o bot registrou a entrada do membro
-- a entrada aconteceu dentro da janela de credito (`credit-window-hours`, default 24h)
-- o membro ainda nao possui recrutador creditado
-- nao existe outro recrutamento ou credito pendente
+1. **Cargo de iniciante** — dropdown com as opcoes cadastradas no painel; botao `Cancelar`.
+2. **Areas** — dropdown de multipla escolha (minimo e maximo configuraveis); botoes `Voltar` e `Cancelar`.
+3. **Confirmacao** — resumo do que foi escolhido; botoes `Confirmar`, `Reiniciar` e `Cancelar`.
 
-Quando criado com sucesso, o bot envia uma DM para todos os Founders com:
+`Voltar` volta a etapa 1 mantendo as escolhas; `Reiniciar` zera as selecoes;
+`Cancelar` encerra. Um rascunho abandonado expira sozinho (`draftTtlMinutes`,
+default 15 min) e a mensagem e trocada pelo texto de expiracao.
 
-- mencao do usuario recrutado
-- ID do usuario em formato copiavel
-- recrutador
-- instrucao para adicionar o usuario na familia do servidor da Pureza
-- botao `Adicionei na familia`
+Ao confirmar, o bot posta a **ficha** no canal configurado, com a foto do
+recrutado, recrutador, cargo, areas, data de criacao da conta e os botoes
+`Confirmar`/`Rejeitar`.
 
-Para credito posterior, a DM informa que o membro ja foi verificado e mostra o botao `Aprovar credito`.
+**A configuracao e congelada no `/recrutar`.** Mudar layout, texto ou pontuacao no
+painel vale para os proximos recrutamentos: um wizard em andamento termina no
+formato em que comecou e uma ficha ja postada continua no formato em que nasceu.
+Como as tres etapas vivem na mesma mensagem, editada a cada passo, o layout da
+etapa 1 manda em todas as mensagens do wizard (o Discord nao deixa editar uma
+mensagem alternando entre embed e Components V2); divergencia e normalizada e
+logada em `recruitment.layout_normalized`. A ficha e outra mensagem e tem layout
+proprio.
 
 ### `/verificar usuario:<membro>`
 
@@ -231,6 +243,13 @@ bastante para estourar a cota diaria do plano Spark.
 
 Mostra sua pontuacao atual e a quantidade de recrutamentos aprovados feitos por voce. A resposta e privada.
 
+### `/pontos-dar usuario:<membro> quantidade:<inteiro> motivo:<texto>`
+
+Da ou remove pontos manualmente. Quem pode usar e definido no painel
+(`pointsGrantRoleIds`), nao por permissao do Discord. A quantidade aceita valor
+negativo e fica limitada a `minManualPoints`/`maxManualPoints`. Depois de gravar,
+o cargo de rank e sincronizado (sobe ou desce junto com a pontuacao).
+
 ### `/ranking limite:<numero>`
 
 Mostra o ranking de membros do servidor, ordenado por pontos e depois por recrutamentos aprovados. O limite e opcional, com padrao 10 e maximo 25. A resposta e privada.
@@ -293,21 +312,61 @@ Enquanto um usuario estiver na blacklist, `/recrutar`, `/verificar` e o botao `V
 
 ## Aprovacao
 
-O botao `Adicionei na familia` so pode ser usado por membros com o cargo `founder`.
+Os botoes da ficha so podem ser usados por quem tem um dos cargos aprovadores
+configurados no painel (`approverRoleIds`). O cargo `founder` continua mandando
+na fila de verificacao de entrada, nao aqui.
 
-Ao aprovar:
+Ao **confirmar**, a acao entra na fila `memberActionJobs` (que serializa as
+escritas) e o bot:
 
-- o recrutamento muda para `approved`
-- o usuario recrutado recebe o cargo `member`
-- o recrutador recebe os pontos configurados (`points`, default 8)
-- o canal de recrutamento recebe um anuncio informando quem foi recrutado e por quem
-- os pontos entram no perfil generico de membro
-- se o recrutador atingir a pontuacao de um novo rank, o cargo de hierarquia e atualizado automaticamente
-- quando houver promocao, o recrutador recebe uma DM informando o novo cargo
-- as DMs enviadas aos Founders sao atualizadas para mostrar a aprovacao
-- o botao e desativado para evitar pontos duplicados
+- muda o recrutamento para `approved`
+- aplica o cargo `member` e o rank base
+- aplica o cargo de iniciante escolhido e os cargos de todas as areas escolhidas
+- credita ao recrutador os pontos congelados na ficha (soma dos pontos das areas,
+  ou o maior deles se `pointsMode` for `highest`)
+- sincroniza o cargo de rank do recrutador e manda DM quando ele sobe
+- anuncia o recrutamento no canal de recrutamento
+- edita a ficha para o estado "aprovada", com os botoes desativados
 
-Em pedidos de credito posterior, o membro ja possui os cargos. Nesse caso a aprovacao apenas soma os pontos ao recrutador, marca a entrada como creditada e atualiza o card de verificacao.
+Ao **rejeitar**, nada de cargo ou ponto acontece: o recrutamento vira `rejected`,
+a entrada do membro volta a ficar livre (um novo `/recrutar` para o mesmo usuario
+passa a ser aceito) e a ficha e editada para o estado "rejeitada".
+
+Em pedidos de credito posterior o membro ja possui os cargos; a aprovacao apenas
+soma os pontos, marca a entrada como creditada e atualiza o card de verificacao.
+
+Recrutamentos criados pelo fluxo antigo (aprovacao por DM aos Founders) continuam
+funcionando: o botao `Adicionei na familia` segue registrado ate drenarem.
+
+## Configuracao do recrutamento
+
+O documento `recruitmentConfigs/{guildId}` e escrito **so** pela
+`dragons-platform` (tela "Recrutamento"); o bot apenas le. Nao existe comando de
+`/config` para isso. Ele guarda:
+
+- `starterRoles`: opcoes da etapa 1, cada uma com um cargo do Discord.
+- `areas`: opcoes da etapa 2, cada uma com 1..n cargos e uma pontuacao.
+- `minAreas` / `maxAreas`, `pointsMode` (`sum` default, ou `highest`).
+- `sheet`: canal da ficha, formato das mensagens (pendente, enfileirada,
+  aprovada, rejeitada), botoes, posicao da foto e se marca os aprovadores.
+- `stepOne` / `stepTwo` / `stepThree` / `outcome`: uma `RecruitmentMessageConfig`
+  por mensagem (layout `embed`/`container`, titulo, texto, cor, imagem) e os
+  botoes de cada etapa (texto, emoji e cor).
+- `approverRoleIds`, `pointsGrantRoleIds`, `minManualPoints`/`maxManualPoints`,
+  `draftTtlMinutes` e os textos avulsos (placeholders e mensagens de bloqueio).
+
+Titulo e texto sao templates: `{recruited}`, `{recruiter}`, `{role}`, `{areas}`,
+`{step}`, `{total}`, `{min}`, `{max}`, `{points}`, `{createdAt}`, `{approver}`,
+`{recruitedId}`, `{recruiterId}`, `{recruitedTag}`, `{recruiterTag}`. O que nao
+casar fica intacto na mensagem.
+
+Emoji customizado precisa ser `<:nome:id>` (ou `<a:nome:id>`); `:atalho:` nao e
+resolvido pela API e apareceria como texto cru — o painel rejeita esse formato.
+
+Documento ausente ou parcial cai nos defaults de
+`DEFAULT_RECRUITMENT_FLOW_CONFIG` (`src/domain/types.ts`), que sao os mesmos
+aplicados pela plataforma. Sem cargos de iniciante, sem areas ou sem canal da
+ficha, o `/recrutar` responde a mensagem de "fluxo nao configurado".
 
 ## Hierarquia
 
@@ -342,6 +401,8 @@ Colecoes usadas no Firestore:
 - subcolecao `recruitments/{id}/approvalMessages`
 - `memberEntries`
 - `memberActionJobs`
+- `recruitmentConfigs` (configuracao do fluxo de recrutamento; escrita so pela `dragons-platform`)
+- `recruitmentDrafts` (rascunhos do wizard de 3 etapas; escrita so pelo bot, apagados ao expirar)
 - `panels`
 - `panelJobs`
 - `supportCategories` (categorias de ticket; escrita so pela `dragons-platform`)
@@ -370,15 +431,25 @@ Eventos principais:
 - `interaction.button.received`
 - `interaction.button.completed`
 - `recruitment.requested`
+- `recruitment.draft_created` / `recruitment.draft_blocked`
+- `recruitment.draft_role_selected` / `recruitment.draft_areas_selected`
+- `recruitment.draft_back` / `recruitment.draft_restarted` / `recruitment.draft_cancelled`
+- `recruitment.draft_expired` / `recruitment.draft_expire_edit_failed` / `recruitment.draft_expiry_failed`
+- `recruitment.layout_normalized` (etapas com layouts diferentes; o da etapa 1 vale para o wizard)
+- `recruitment.sheet_sent` / `recruitment.sheet_channel_not_found` / `recruitment.sheet_edit_failed`
+- `recruitment.sheet_blocked` (clique na ficha sem cargo aprovador)
+- `recruitment.approval_enqueued` / `recruitment.approved` / `recruitment.rejected`
+- `recruitment.starter_role_add_failed` / `recruitment.area_role_add_failed`
+- `recruitment_config.missing` (fluxo nao configurado no painel)
 - `recruitment.created`
-- `recruitment.approval_dm_sent`
-- `recruitment.approved`
+- `recruitment.approval_dm_sent` (fluxo antigo, por DM)
 - `recruitment.blocked`
 - `recruitment.approval_blocked`
 - `config.role_set`
 - `config.channel_set`
 - `config.number_set`
 - `points.viewed`
+- `points.granted_manual` / `points.grant_blocked`
 - `ranking.viewed`
 - `panel.created`
 - `panel.image_set`

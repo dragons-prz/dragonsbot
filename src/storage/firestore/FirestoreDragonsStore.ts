@@ -44,6 +44,15 @@ import {
   Recruitment,
   RecruitmentKind,
   RecruitmentApprovalMessage,
+  RecruitmentDraft,
+  RecruitmentDraftStatus,
+  RecruitmentFlowConfig,
+  RecruitmentPresentationSnapshot,
+  RecruitmentSheetSnapshot,
+  RecruitmentStatus,
+  CreateRecruitmentDraftInput,
+  UpdateRecruitmentDraftInput,
+  DEFAULT_RECRUITMENT_FLOW_CONFIG,
   RoleConfigKey,
   CreateTicketInput,
   SupportCategoryCloseAction,
@@ -52,6 +61,17 @@ import {
   TicketStatus
 } from "../../domain/types";
 import { DragonsStore } from "../DragonsStore";
+
+/** Estados de rascunho em que ainda cabe editar/cancelar. */
+const EDITABLE_DRAFT_STATUSES: RecruitmentDraftStatus[] = [
+  "selecting_role",
+  "selecting_areas",
+  "confirming"
+];
+
+function isEditableDraftStatus(status: RecruitmentDraftStatus): boolean {
+  return EDITABLE_DRAFT_STATUSES.includes(status);
+}
 
 interface GuildConfigDocument {
   recruiterRoleId: string;
@@ -73,11 +93,42 @@ interface RecruitmentDocument {
   recruitUserId: string;
   recruiterUserId: string;
   kind?: RecruitmentKind;
-  status: "pending" | "approved";
+  status: RecruitmentStatus;
   approvalMessageId: string | null;
   approvedByUserId: string | null;
   createdAt: string;
   approvedAt: string | null;
+  /** Campos do fluxo de 3 etapas; ausentes nos recrutamentos legados. */
+  starterRoleOptionId?: string | null;
+  starterRoleId?: string | null;
+  starterRoleLabel?: string | null;
+  areaOptionIds?: string[];
+  areaRoleIds?: string[];
+  areaLabels?: string[];
+  points?: number;
+  sheetChannelId?: string | null;
+  sheetMessageId?: string | null;
+  sheetPresentation?: RecruitmentSheetSnapshot | null;
+  rejectedByUserId?: string | null;
+  rejectedAt?: string | null;
+}
+
+interface RecruitmentDraftDocument {
+  id: string;
+  guildId: string;
+  channelId: string;
+  messageId: string | null;
+  recruiterUserId: string;
+  recruitUserId: string;
+  kind: RecruitmentKind;
+  status: RecruitmentDraftStatus;
+  starterRoleId: string | null;
+  areaIds: string[];
+  presentation: RecruitmentPresentationSnapshot;
+  recruitmentId: number | null;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
 }
 
 interface MemberEntryDocument {
@@ -510,6 +561,22 @@ export class FirestoreDragonsStore implements DragonsStore {
     });
   }
 
+  async markMemberEntryRecruitmentRejected(
+    guildId: string,
+    userId: string,
+    rejectedByUserId: string
+  ): Promise<MemberEntry | null> {
+    // Libera um novo `/recrutar` para o mesmo usuario: nenhum recrutador
+    // creditado, nenhuma pendencia. `verifiedByUserId` guarda quem rejeitou
+    // so como rastro de quem mexeu por ultimo na entrada.
+    return this.updateMemberEntry(guildId, userId, {
+      status: "recruitment_rejected",
+      recruiterUserId: null,
+      verifiedByUserId: rejectedByUserId,
+      recruitmentId: null
+    });
+  }
+
   async markMemberEntryLeft(guildId: string, userId: string): Promise<MemberEntry | null> {
     const now = new Date().toISOString();
     return this.updateMemberEntry(guildId, userId, {
@@ -650,6 +717,183 @@ export class FirestoreDragonsStore implements DragonsStore {
     return this.watchPendingJobs("memberActionJobs", "member_action_job", onPending);
   }
 
+  /**
+   * `recruitmentConfigs/{guildId}` — escrito SO pela dragons-platform. Aqui
+   * so lemos, aplicando os MESMOS defaults que a plataforma aplica do outro
+   * lado, para documento ausente ou parcial nao quebrar o fluxo.
+   */
+  async getRecruitmentFlowConfig(guildId: string): Promise<RecruitmentFlowConfig> {
+    const snapshot = await this.recruitmentConfigRef(guildId).get();
+    const data = snapshot.exists ? (snapshot.data() as Partial<RecruitmentFlowConfig>) : null;
+    const defaults = DEFAULT_RECRUITMENT_FLOW_CONFIG;
+    const now = new Date().toISOString();
+
+    return {
+      guildId,
+      starterRoles: [...(data?.starterRoles ?? [])].sort((a, b) => a.order - b.order),
+      areas: [...(data?.areas ?? [])].sort((a, b) => a.order - b.order),
+      minAreas: data?.minAreas ?? defaults.minAreas,
+      maxAreas: data?.maxAreas ?? defaults.maxAreas,
+      stepOne: data?.stepOne ?? defaults.stepOne,
+      stepTwo: data?.stepTwo ?? defaults.stepTwo,
+      stepThree: data?.stepThree ?? defaults.stepThree,
+      outcome: data?.outcome ?? defaults.outcome,
+      sheet: data?.sheet ?? defaults.sheet,
+      approverRoleIds: data?.approverRoleIds ?? defaults.approverRoleIds,
+      pointsGrantRoleIds: data?.pointsGrantRoleIds ?? defaults.pointsGrantRoleIds,
+      pointsMode: data?.pointsMode ?? defaults.pointsMode,
+      minManualPoints: data?.minManualPoints ?? defaults.minManualPoints,
+      maxManualPoints: data?.maxManualPoints ?? defaults.maxManualPoints,
+      draftTtlMinutes: data?.draftTtlMinutes ?? defaults.draftTtlMinutes,
+      rolePendingText: data?.rolePendingText ?? defaults.rolePendingText,
+      areasPendingText: data?.areasPendingText ?? defaults.areasPendingText,
+      notRecruiterMessage: data?.notRecruiterMessage ?? defaults.notRecruiterMessage,
+      notApproverMessage: data?.notApproverMessage ?? defaults.notApproverMessage,
+      notDraftOwnerMessage: data?.notDraftOwnerMessage ?? defaults.notDraftOwnerMessage,
+      notConfiguredMessage: data?.notConfiguredMessage ?? defaults.notConfiguredMessage,
+      createdAt: data?.createdAt ?? now,
+      updatedAt: data?.updatedAt ?? now
+    };
+  }
+
+  async createRecruitmentDraft(input: CreateRecruitmentDraftInput): Promise<RecruitmentDraft> {
+    const now = new Date();
+    const ref = this.db.collection("recruitmentDrafts").doc();
+    const document: RecruitmentDraftDocument = {
+      id: ref.id,
+      guildId: input.guildId,
+      channelId: input.channelId,
+      messageId: null,
+      recruiterUserId: input.recruiterUserId,
+      recruitUserId: input.recruitUserId,
+      kind: input.kind,
+      status: "selecting_role",
+      starterRoleId: null,
+      areaIds: [],
+      presentation: input.presentation,
+      recruitmentId: null,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + input.ttlMinutes * 60_000).toISOString()
+    };
+    await ref.set(document);
+    return this.mapRecruitmentDraft(document);
+  }
+
+  async getRecruitmentDraft(id: string): Promise<RecruitmentDraft | null> {
+    const snapshot = await this.recruitmentDraftRef(id).get();
+    return snapshot.exists
+      ? this.mapRecruitmentDraft(snapshot.data() as RecruitmentDraftDocument)
+      : null;
+  }
+
+  async setRecruitmentDraftMessage(id: string, channelId: string, messageId: string): Promise<void> {
+    await this.recruitmentDraftRef(id).update({
+      channelId,
+      messageId,
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  async updateRecruitmentDraftSelection(
+    id: string,
+    input: UpdateRecruitmentDraftInput
+  ): Promise<RecruitmentDraft | null> {
+    return this.updateRecruitmentDraft(id, (data) => {
+      if (!isEditableDraftStatus(data.status)) {
+        return null;
+      }
+      return {
+        ...data,
+        starterRoleId: input.starterRoleId === undefined ? data.starterRoleId : input.starterRoleId,
+        areaIds: input.areaIds ?? data.areaIds,
+        status: input.status
+      };
+    });
+  }
+
+  async cancelRecruitmentDraft(id: string): Promise<RecruitmentDraft | null> {
+    return this.updateRecruitmentDraft(id, (data) =>
+      isEditableDraftStatus(data.status) ? { ...data, status: "cancelled" } : null
+    );
+  }
+
+  async markRecruitmentDraftSubmitted(
+    id: string,
+    recruitmentId: number
+  ): Promise<RecruitmentDraft | null> {
+    return this.updateRecruitmentDraft(id, (data) =>
+      isEditableDraftStatus(data.status) ? { ...data, status: "submitted", recruitmentId } : null
+    );
+  }
+
+  /**
+   * Varre os rascunhos cujo `expiresAt` passou e devolve os que ainda estavam
+   * abertos, para o chamador editar as mensagens correspondentes.
+   *
+   * O documento e APAGADO no fim: rascunho e transitorio (tudo que importa ja
+   * foi copiado para o recrutamento) e, sem isso, a consulta por `expiresAt`
+   * devolveria os mesmos documentos vencidos para sempre. A consulta usa so
+   * o campo `expiresAt` de proposito — combinar `status` com a desigualdade
+   * exigiria um indice composto no Firestore.
+   */
+  async expireStaleRecruitmentDrafts(): Promise<RecruitmentDraft[]> {
+    const now = new Date().toISOString();
+    const snapshot = await this.db
+      .collection("recruitmentDrafts")
+      .where("expiresAt", "<=", now)
+      .orderBy("expiresAt")
+      .limit(50)
+      .get();
+
+    if (snapshot.empty) {
+      return [];
+    }
+
+    const batch = this.db.batch();
+    const expired: RecruitmentDraft[] = [];
+    for (const doc of snapshot.docs) {
+      const data = doc.data() as RecruitmentDraftDocument;
+      if (isEditableDraftStatus(data.status)) {
+        expired.push(this.mapRecruitmentDraft({ ...data, status: "expired", updatedAt: now }));
+      }
+      batch.delete(doc.ref);
+    }
+    await batch.commit();
+    return expired;
+  }
+
+  /** Transacao comum das mudancas de estado do rascunho. */
+  private async updateRecruitmentDraft(
+    id: string,
+    apply: (data: RecruitmentDraftDocument) => RecruitmentDraftDocument | null
+  ): Promise<RecruitmentDraft | null> {
+    const now = new Date().toISOString();
+    return this.db.runTransaction(async (transaction) => {
+      const ref = this.recruitmentDraftRef(id);
+      const snapshot = await transaction.get(ref);
+      if (!snapshot.exists) {
+        return null;
+      }
+
+      const data = snapshot.data() as RecruitmentDraftDocument;
+      const next = apply(data);
+      if (!next) {
+        return null;
+      }
+
+      const updated: RecruitmentDraftDocument = { ...next, updatedAt: now };
+      transaction.update(ref, {
+        status: updated.status,
+        starterRoleId: updated.starterRoleId,
+        areaIds: updated.areaIds,
+        recruitmentId: updated.recruitmentId,
+        updatedAt: now
+      });
+      return this.mapRecruitmentDraft(updated);
+    });
+  }
+
   async createRecruitment(input: CreateRecruitmentInput): Promise<Recruitment> {
     const now = new Date().toISOString();
     const recruitment = await this.db.runTransaction(async (transaction) => {
@@ -668,7 +912,19 @@ export class FirestoreDragonsStore implements DragonsStore {
         approvalMessageId: null,
         approvedByUserId: null,
         createdAt: now,
-        approvedAt: null
+        approvedAt: null,
+        starterRoleOptionId: input.starterRoleOptionId ?? null,
+        starterRoleId: input.starterRoleId ?? null,
+        starterRoleLabel: input.starterRoleLabel ?? null,
+        areaOptionIds: input.areaOptionIds ?? [],
+        areaRoleIds: input.areaRoleIds ?? [],
+        areaLabels: input.areaLabels ?? [],
+        points: input.points ?? 0,
+        sheetChannelId: null,
+        sheetMessageId: null,
+        sheetPresentation: input.sheetPresentation ?? null,
+        rejectedByUserId: null,
+        rejectedAt: null
       };
 
       transaction.set(this.recruitmentRef(nextId), document);
@@ -737,6 +993,45 @@ export class FirestoreDragonsStore implements DragonsStore {
     }
     batch.delete(this.recruitmentRef(id));
     await batch.commit();
+  }
+
+  async setRecruitmentSheetMessage(id: number, channelId: string, messageId: string): Promise<void> {
+    await this.recruitmentRef(id).update({
+      sheetChannelId: channelId,
+      sheetMessageId: messageId,
+      // Mantido em sincronia com o campo legado para o fluxo antigo de
+      // `updateApprovalMessages` continuar achando a mensagem.
+      approvalMessageId: messageId
+    });
+  }
+
+  async rejectRecruitment(id: number, rejectedByUserId: string): Promise<Recruitment | null> {
+    const now = new Date().toISOString();
+    return this.db.runTransaction(async (transaction) => {
+      const ref = this.recruitmentRef(id);
+      const snapshot = await transaction.get(ref);
+      if (!snapshot.exists) {
+        return null;
+      }
+
+      const data = snapshot.data() as RecruitmentDocument;
+      if (data.status !== "pending") {
+        return null;
+      }
+
+      transaction.update(ref, {
+        status: "rejected",
+        rejectedByUserId,
+        rejectedAt: now
+      });
+
+      return this.mapRecruitment({
+        ...data,
+        status: "rejected",
+        rejectedByUserId,
+        rejectedAt: now
+      });
+    });
   }
 
   async approveRecruitment(id: number, approvedByUserId: string): Promise<Recruitment | null> {
@@ -1581,7 +1876,39 @@ export class FirestoreDragonsStore implements DragonsStore {
       approvalMessageId: data.approvalMessageId,
       approvedByUserId: data.approvedByUserId,
       createdAt: data.createdAt,
-      approvedAt: data.approvedAt
+      approvedAt: data.approvedAt,
+      starterRoleOptionId: data.starterRoleOptionId ?? null,
+      starterRoleId: data.starterRoleId ?? null,
+      starterRoleLabel: data.starterRoleLabel ?? null,
+      areaOptionIds: data.areaOptionIds ?? [],
+      areaRoleIds: data.areaRoleIds ?? [],
+      areaLabels: data.areaLabels ?? [],
+      points: data.points ?? 0,
+      sheetChannelId: data.sheetChannelId ?? null,
+      sheetMessageId: data.sheetMessageId ?? null,
+      sheetPresentation: data.sheetPresentation ?? null,
+      rejectedByUserId: data.rejectedByUserId ?? null,
+      rejectedAt: data.rejectedAt ?? null
+    };
+  }
+
+  private mapRecruitmentDraft(data: RecruitmentDraftDocument): RecruitmentDraft {
+    return {
+      id: data.id,
+      guildId: data.guildId,
+      channelId: data.channelId,
+      messageId: data.messageId ?? null,
+      recruiterUserId: data.recruiterUserId,
+      recruitUserId: data.recruitUserId,
+      kind: data.kind ?? "standard",
+      status: data.status,
+      starterRoleId: data.starterRoleId ?? null,
+      areaIds: data.areaIds ?? [],
+      presentation: data.presentation,
+      recruitmentId: data.recruitmentId ?? null,
+      createdAt: data.createdAt,
+      updatedAt: data.updatedAt,
+      expiresAt: data.expiresAt
     };
   }
 
@@ -1684,6 +2011,14 @@ export class FirestoreDragonsStore implements DragonsStore {
 
   private memberPointEventRef() {
     return this.db.collection("memberPointEvents").doc();
+  }
+
+  private recruitmentConfigRef(guildId: string) {
+    return this.db.collection("recruitmentConfigs").doc(guildId);
+  }
+
+  private recruitmentDraftRef(id: string) {
+    return this.db.collection("recruitmentDrafts").doc(id);
   }
 
   private counterRef(name: string) {

@@ -6,6 +6,7 @@ import {
   ButtonStyle,
   Client,
   EmbedBuilder,
+  Guild,
   GuildMember,
   PartialGuildMember,
   MessageCreateOptions,
@@ -15,15 +16,19 @@ import {
 } from "discord.js";
 import {
   MemberActionJob,
-  MemberEntry
+  MemberEntry,
+  Recruitment
 } from "../domain/types";
 import {
   getGuildId,
+  memberHasAnyRole,
   memberHasRole,
   requireGuildMember
 } from "../utils/discord";
 import { startJobWorker } from "../utils/jobWorker";
 import { logger } from "../utils/logger";
+import { syncMemberRankRoles } from "../utils/rankRoles";
+import { editSheetMessage } from "./recruitment/sheet";
 import { ButtonHandler, SlashCommand } from "./types";
 
 const APPROVE_PREFIX = "recruitment:approve:";
@@ -344,6 +349,53 @@ function isCreditWindowOpen(entry: MemberEntry, windowHours: number) {
   return Date.now() - new Date(entry.joinedAt).getTime() <= windowHours * 60 * 60 * 1000;
 }
 
+/**
+ * Aplica os cargos escolhidos no wizard: o cargo de iniciante e os cargos de
+ * cada area. Cada `roles.add` e independente — falha de um cargo vira log e
+ * nao derruba o job, porque os pontos e o status ja foram gravados em
+ * transacao e nao da para "desaprovar" o recrutamento.
+ */
+async function applyRecruitmentRoles(
+  guild: Guild,
+  recruitMember: GuildMember,
+  recruitment: Recruitment,
+  logContext: Record<string, unknown>
+): Promise<void> {
+  const targets: { roleId: string; kind: "starter" | "area" }[] = [
+    ...(recruitment.starterRoleId ? [{ roleId: recruitment.starterRoleId, kind: "starter" as const }] : []),
+    ...recruitment.areaRoleIds.map((roleId) => ({ roleId, kind: "area" as const }))
+  ];
+
+  for (const target of targets) {
+    const role = await guild.roles.fetch(target.roleId).catch(() => null);
+    if (!role) {
+      logger.warn(
+        target.kind === "starter"
+          ? "recruitment.starter_role_add_failed"
+          : "recruitment.area_role_add_failed",
+        { reason: "role_not_found", guildId: guild.id, roleId: target.roleId, ...logContext }
+      );
+      continue;
+    }
+
+    if (recruitMember.roles.cache.has(role.id)) {
+      continue;
+    }
+
+    await recruitMember.roles
+      .add(role, `Recrutamento #${recruitment.id} aprovado`)
+      .catch((error) => {
+        logger.error(
+          target.kind === "starter"
+            ? "recruitment.starter_role_add_failed"
+            : "recruitment.area_role_add_failed",
+          error,
+          { guildId: guild.id, roleId: target.roleId, userId: recruitMember.id, ...logContext }
+        );
+      });
+  }
+}
+
 type ApplyMemberRolesResult =
   | { ok: true; rankName: string }
   | { ok: false; message: string };
@@ -532,8 +584,11 @@ async function processApproveRecruitmentJob(client: Client, store: CommandStore,
   }
 
   const config = await store.getGuildConfig(job.guildId);
-  if (!memberHasRole(founder, config.founderRoleId)) {
-    await store.cancelMemberActionJob(job.id, "Solicitante nao possui mais o cargo Founder.");
+  const flowConfig = await store.getRecruitmentFlowConfig(job.guildId);
+  // Quem aprova a ficha e definido no painel (`approverRoleIds`). O cargo de
+  // Founder segue mandando na verificacao de entrada, nao aqui.
+  if (!memberHasAnyRole(founder, flowConfig.approverRoleIds)) {
+    await store.cancelMemberActionJob(job.id, "Solicitante nao possui mais cargo de aprovacao.");
     return;
   }
 
@@ -586,10 +641,16 @@ async function processApproveRecruitmentJob(client: Client, store: CommandStore,
     }
   }
 
+  // Pontos congelados no envio da ficha (soma das areas) — inclusive quando
+  // dao zero. Recrutamento legado, do fluxo de DM, nao tem snapshot e cai no
+  // valor fixo do config.
+  const pointsToAward = recruitment.sheetPresentation
+    ? recruitment.points
+    : config.recruitmentPoints;
   const approval = await store.approveRecruitmentAndAddMemberPoints(
     recruitment.id,
     founder.id,
-    config.recruitmentPoints,
+    pointsToAward,
     recruitment.kind === "credit"
       ? `Credito de recrutamento #${recruitment.id} aprovado`
       : `Recrutamento #${recruitment.id} aprovado`
@@ -600,95 +661,48 @@ async function processApproveRecruitmentJob(client: Client, store: CommandStore,
   }
   const { recruitment: approved, member: promotedMember } = approval;
 
-  const currentRankRole = await guild.roles.fetch(promotedMember.rankRoleId).catch(() => null);
-  if (!recruiterMember) {
-    logger.warn("hierarchy.member_not_found", {
-      guildId: job.guildId,
-      recruitmentId: approved.id,
-      userId: promotedMember.userId,
-      rankName: promotedMember.rankName,
-      rankRoleId: promotedMember.rankRoleId
-    });
-  } else {
-    if (approval.rankChanged) {
-      const oldRank = await guild.roles.fetch(approval.previousRankRoleId).catch(() => null);
-      if (oldRank && recruiterMember.roles.cache.has(oldRank.id)) {
-        await recruiterMember.roles.remove(oldRank, `Promocao automatica para ${promotedMember.rankName}`).catch((error) => {
-          logger.error("hierarchy.old_rank_remove_failed", error, {
-            guildId: job.guildId,
-            recruitmentId: approved.id,
-            userId: recruiterMember.id,
-            userTag: recruiterMember.user.tag,
-            oldRankRoleId: oldRank.id
-          });
-        });
-      }
-    }
+  // Cargos do fluxo novo: cargo de iniciante + cargos das areas escolhidas.
+  // Idempotente (so adiciona o que falta), entao serve tambem para o
+  // recrutamento de credito, em que o membro ja tem parte deles.
+  await applyRecruitmentRoles(guild, recruitMember as GuildMember, approved, {
+    jobId: job.id,
+    recruitmentId: approved.id
+  });
 
-    if (currentRankRole && !recruiterMember.roles.cache.has(currentRankRole.id)) {
-      await recruiterMember.roles.add(currentRankRole, `Sincronizacao automatica de rank ${promotedMember.rankName}`).catch((error) => {
-        logger.error("hierarchy.rank_role_add_failed", error, {
-          guildId: job.guildId,
-          recruitmentId: approved.id,
-          userId: recruiterMember.id,
-          userTag: recruiterMember.user.tag,
-          rankName: promotedMember.rankName,
-          rankRoleId: promotedMember.rankRoleId
-        });
-      });
-    }
-
-    if (approval.rankChanged) {
-      await recruiterMember.send(`Parabens! Voce upou para o cargo **${promotedMember.rankName}**.`).catch((error) => {
-        logger.error("hierarchy.rank_up_dm_failed", error, {
-          guildId: job.guildId,
-          recruitmentId: approved.id,
-          userId: recruiterMember.id,
-          userTag: recruiterMember.user.tag,
-          rankName: promotedMember.rankName,
-          rankRoleId: promotedMember.rankRoleId
-        });
-      });
-      logger.info("hierarchy.rank_up", {
-        guildId: job.guildId,
-        recruitmentId: approved.id,
-        userId: recruiterMember.id,
-        userTag: recruiterMember.user.tag,
-        previousRankName: approval.previousRankName,
-        previousRankRoleId: approval.previousRankRoleId,
-        rankName: promotedMember.rankName,
-        rankRoleId: promotedMember.rankRoleId,
-        points: promotedMember.points
-      });
-    }
-
-    if (!currentRankRole) {
-      logger.warn("hierarchy.rank_role_not_found", {
-        guildId: job.guildId,
-        recruitmentId: approved.id,
-        userId: promotedMember.userId,
-        rankName: promotedMember.rankName,
-        rankRoleId: promotedMember.rankRoleId
-      });
-    }
-  }
-
-  const approvedMessage = buildApprovedMessage(
-    approved.guildId,
-    approved.id,
-    approved.recruitUserId,
+  await syncMemberRankRoles(
+    guild,
     approved.recruiterUserId,
-    founder.id,
-    promotedMember.points,
-    promotedMember.rankName,
-    approved.kind
+    {
+      member: promotedMember,
+      previousRankName: approval.previousRankName,
+      previousRankRoleId: approval.previousRankRoleId,
+      rankChanged: approval.rankChanged
+    },
+    { jobId: job.id, recruitmentId: approved.id }
   );
-  const { approvalMessages, updatedMessages, failedMessageUpdates } = await updateApprovalMessages(
-    client,
-    approved.id,
-    store,
-    approvedMessage
-  );
+
+  let approvalMessages: { messageId: string }[] = [];
+  let updatedMessages = 0;
+  let failedMessageUpdates = 0;
+  if (approved.sheetPresentation) {
+    await editSheetMessage(client, store, approved, "approved", founder.id);
+  } else {
+    // Recrutamento legado: continua atualizando as DMs enviadas aos founders.
+    const approvedMessage = buildApprovedMessage(
+      approved.guildId,
+      approved.id,
+      approved.recruitUserId,
+      approved.recruiterUserId,
+      founder.id,
+      promotedMember.points,
+      promotedMember.rankName,
+      approved.kind
+    );
+    const result = await updateApprovalMessages(client, approved.id, store, approvedMessage);
+    approvalMessages = result.approvalMessages;
+    updatedMessages = result.updatedMessages;
+    failedMessageUpdates = result.failedMessageUpdates;
+  }
 
   const updatedEntry = approved.kind === "credit"
     ? await store.markMemberEntryCredited(approved.guildId, approved.recruitUserId, approved.recruiterUserId, founder.id, approved.id)
@@ -721,7 +735,7 @@ async function processApproveRecruitmentJob(client: Client, store: CommandStore,
     recruiterUserTag: recruiterMember?.user.tag,
     recruitUserId: approved.recruitUserId,
     recruitUserTag: recruitMember.user.tag,
-    pointsAdded: config.recruitmentPoints,
+    pointsAdded: pointsToAward,
     memberTotalPoints: promotedMember.points,
     memberRecruitments: promotedMember.recruitments,
     memberRankName: promotedMember.rankName,
@@ -808,6 +822,12 @@ async function restoreMemberActionJobUiOnFailure(client: Client, store: CommandS
     return;
   }
 
+  if (recruitment.sheetPresentation) {
+    // Fluxo novo: a ficha volta ao estado clicavel para tentarem de novo.
+    await editSheetMessage(client, store, recruitment, "pending", null);
+    return;
+  }
+
   const entry = await store.getMemberEntry(recruitment.guildId, recruitment.recruitUserId);
   await updateApprovalMessages(
     client,
@@ -866,272 +886,6 @@ export function startMemberActionJobWorker(client: Client, store: CommandStore) 
     watch: (onPending) => store.watchPendingMemberActionJobs(onPending)
   });
 }
-
-export const recrutarCommand: SlashCommand = {
-  data: new SlashCommandBuilder()
-    .setName("recrutar")
-    .setDescription("Envia uma ficha de recrutamento para aprovacao.")
-    .addUserOption((option) =>
-      option.setName("usuario").setDescription("Membro recrutado.").setRequired(true)
-    ),
-
-  async execute(interaction, { store }) {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-    const guildId = getGuildId(interaction);
-    const recruiter = requireGuildMember(interaction);
-    const config = await store.getGuildConfig(guildId);
-
-    if (!memberHasRole(recruiter, config.recruiterRoleId)) {
-      logger.warn("recruitment.blocked", {
-        reason: "missing_recruiter_role",
-        guildId,
-        recruiterUserId: recruiter.id,
-        recruiterUserTag: recruiter.user.tag,
-        requiredRoleId: config.recruiterRoleId
-      });
-      await interaction.editReply("Voce nao possui o cargo de recrutamento.");
-      return;
-    }
-
-    const recruitUser = interaction.options.getUser("usuario", true);
-    logger.info("recruitment.requested", {
-      guildId,
-      recruiterUserId: recruiter.id,
-      recruiterUserTag: recruiter.user.tag,
-      recruitUserId: recruitUser.id,
-      recruitUserTag: recruitUser.tag
-    });
-
-    const recruitMember = await interaction.guild!.members.fetch(recruitUser.id).catch(() => null);
-    if (!recruitMember) {
-      logger.warn("recruitment.blocked", {
-        reason: "recruit_not_in_guild",
-        guildId,
-        recruiterUserId: recruiter.id,
-        recruiterUserTag: recruiter.user.tag,
-        recruitUserId: recruitUser.id,
-        recruitUserTag: recruitUser.tag
-      });
-      await interaction.editReply("O usuario informado nao esta no servidor.");
-      return;
-    }
-
-    const blacklistEntry = await store.getBlacklistEntry(guildId, recruitUser.id);
-    if (blacklistEntry) {
-      logger.warn("recruitment.blocked", {
-        reason: "blacklisted",
-        guildId,
-        recruiterUserId: recruiter.id,
-        recruiterUserTag: recruiter.user.tag,
-        recruitUserId: recruitUser.id,
-        recruitUserTag: recruitUser.tag,
-        blacklistReason: blacklistEntry.reason
-      });
-      await interaction.editReply(`⚠️ Este usuario esta na blacklist e nao pode ser recrutado. Motivo: ${blacklistEntry.reason}`);
-      return;
-    }
-
-    const pending = await store.findPendingRecruitmentByUser(guildId, recruitUser.id);
-    if (pending) {
-      if (!pending.approvalMessageId) {
-        logger.warn("recruitment.pending_orphan_deleted", {
-          guildId,
-          recruitmentId: pending.id,
-          recruitUserId: recruitUser.id
-        });
-        await store.deletePendingRecruitment(pending.id);
-      } else {
-        logger.warn("recruitment.blocked", {
-          reason: "pending_exists",
-          guildId,
-          recruitmentId: pending.id,
-          recruiterUserId: recruiter.id,
-          recruiterUserTag: recruiter.user.tag,
-          recruitUserId: recruitUser.id,
-          recruitUserTag: recruitUser.tag
-        });
-        await interaction.editReply(`Ja existe um recrutamento pendente para este usuario (#${pending.id}).`);
-        return;
-      }
-    }
-
-    const memberEntry = await store.getMemberEntry(guildId, recruitUser.id);
-    const recruitAlreadyMember = recruitMember.roles.cache.has(config.memberRoleId);
-    const recruitmentKind = recruitAlreadyMember ? "credit" : "standard";
-
-    if (recruitAlreadyMember) {
-      if (!memberEntry) {
-        logger.warn("recruitment.blocked", {
-          reason: "member_entry_not_found_for_credit",
-          guildId,
-          recruiterUserId: recruiter.id,
-          recruiterUserTag: recruiter.user.tag,
-          recruitUserId: recruitUser.id,
-          recruitUserTag: recruitUser.tag
-        });
-        await interaction.editReply("Este usuario ja e membro e nao possui entrada recente registrada pelo bot para credito.");
-        return;
-      }
-
-      if (!isCreditWindowOpen(memberEntry, config.recruitmentCreditWindowHours)) {
-        logger.warn("recruitment.blocked", {
-          reason: "credit_window_expired",
-          guildId,
-          recruiterUserId: recruiter.id,
-          recruiterUserTag: recruiter.user.tag,
-          recruitUserId: recruitUser.id,
-          recruitUserTag: recruitUser.tag,
-          joinedAt: memberEntry.joinedAt
-        });
-        await interaction.editReply(`Este usuario ja foi verificado e a janela de ${config.recruitmentCreditWindowHours}h para credito expirou.`);
-        return;
-      }
-
-      if (memberEntry.recruiterUserId || memberEntry.creditedAt || memberEntry.status === "recruitment_pending" || memberEntry.status === "credit_pending") {
-        logger.warn("recruitment.blocked", {
-          reason: "credit_already_claimed_or_pending",
-          guildId,
-          recruiterUserId: recruiter.id,
-          recruiterUserTag: recruiter.user.tag,
-          recruitUserId: recruitUser.id,
-          recruitUserTag: recruitUser.tag,
-          entryStatus: memberEntry.status,
-          entryRecruiterUserId: memberEntry.recruiterUserId
-        });
-        await interaction.editReply("Este usuario ja possui recrutador creditado ou pedido de credito pendente.");
-        return;
-      }
-    }
-
-    const founders = (await interaction.guild!.members.fetch()).filter(
-      (member) => !member.user.bot && member.roles.cache.has(config.founderRoleId)
-    );
-    if (founders.size === 0) {
-      logger.warn("recruitment.blocked", {
-        reason: "no_founders_found",
-        guildId,
-        recruiterUserId: recruiter.id,
-        recruiterUserTag: recruiter.user.tag,
-        recruitUserId: recruitUser.id,
-        recruitUserTag: recruitUser.tag,
-        founderRoleId: config.founderRoleId
-      });
-      await interaction.editReply("Nao encontrei nenhum Founder para receber a aprovacao por DM.");
-      return;
-    }
-
-    const recruitment = await store.createRecruitment({
-      guildId,
-      recruitUserId: recruitUser.id,
-      recruiterUserId: recruiter.id,
-      kind: recruitmentKind
-    });
-    logger.info("recruitment.created", {
-      guildId,
-      recruitmentId: recruitment.id,
-      recruiterUserId: recruiter.id,
-      recruiterUserTag: recruiter.user.tag,
-      recruitUserId: recruitUser.id,
-      recruitUserTag: recruitUser.tag,
-      kind: recruitment.kind,
-      founderCount: founders.size
-    });
-
-    try {
-      const approvalMessage = buildApprovalMessage(
-        guildId,
-        recruitment.id,
-        recruitUser.id,
-        recruiter.id,
-        recruitment.kind,
-        memberEntry?.verifiedByUserId,
-        memberEntry?.joinedAt
-      );
-      const sentMessages = await Promise.allSettled(
-        founders.map(async (founderMember) => ({
-          founderId: founderMember.id,
-          message: await founderMember.send(approvalMessage)
-        }))
-      );
-      const firstSent = sentMessages.find((result) => result.status === "fulfilled");
-      const failedCount = sentMessages.filter((result) => result.status === "rejected").length;
-      const sentCount = sentMessages.length - failedCount;
-
-      if (!firstSent || firstSent.status !== "fulfilled") {
-        throw new Error("Nenhum Founder recebeu a DM de aprovacao.");
-      }
-
-      await store.setRecruitmentApprovalMessage(recruitment.id, firstSent.value.message.id);
-      for (const result of sentMessages) {
-        if (result.status === "fulfilled") {
-          await store.addRecruitmentApprovalMessage({
-            recruitmentId: recruitment.id,
-            founderUserId: result.value.founderId,
-            channelId: result.value.message.channelId,
-            messageId: result.value.message.id
-          });
-        }
-      }
-
-      const updatedEntry = recruitment.kind === "credit"
-        ? await store.markMemberEntryCreditPending(guildId, recruitUser.id, recruiter.id, recruitment.id)
-        : await store.markMemberEntryRecruitmentPending(guildId, recruitUser.id, recruiter.id, recruitment.id);
-      if (updatedEntry) {
-        await editMemberEntryCard(interaction.client, updatedEntry, recruitMember as GuildMember, {
-          title: recruitment.kind === "credit" ? "Credito de recrutamento pendente" : "Recrutamento pendente",
-          description: recruitment.kind === "credit"
-            ? `Pedido de credito #${recruitment.id} enviado para aprovacao dos Founders.`
-            : `Recrutamento #${recruitment.id} enviado para aprovacao dos Founders.`,
-          color: 0xf08c00,
-          buttonDisabled: true,
-          buttonLabel: recruitment.kind === "credit" ? "Credito pendente" : "Recrutamento pendente",
-          extraFields: [
-            { name: "Recrutador", value: `<@${recruiter.id}>`, inline: true },
-            { name: "Recrutamento", value: `#${recruitment.id}`, inline: true }
-          ]
-        });
-      }
-
-      await interaction.editReply(
-        [
-          recruitment.kind === "credit"
-            ? `Pedido de credito #${recruitment.id} criado e pendente de aprovacao.`
-            : `Recrutamento #${recruitment.id} criado e pendente de aprovacao.`,
-          "Os Founders foram notificados por DM."
-        ].filter(Boolean).join("\n")
-      );
-      logger.info("recruitment.approval_dm_sent", {
-        guildId,
-        recruitmentId: recruitment.id,
-        recruiterUserId: recruiter.id,
-        recruiterUserTag: recruiter.user.tag,
-        recruitUserId: recruitUser.id,
-        recruitUserTag: recruitUser.tag,
-        kind: recruitment.kind,
-        sentCount,
-        failedCount
-      });
-    } catch (error) {
-      await store.deletePendingRecruitment(recruitment.id);
-      logger.error("recruitment.approval_dm_failed", error, {
-        guildId,
-        recruitmentId: recruitment.id,
-        recruiterUserId: recruiter.id,
-        recruiterUserTag: recruiter.user.tag,
-        recruitUserId: recruitUser.id,
-        recruitUserTag: recruitUser.tag
-      });
-      await interaction.editReply(
-        [
-          "Nao consegui enviar a ficha por DM para nenhum Founder.",
-          "Verifique se existe alguem com o cargo Founder e se a pessoa aceita mensagens diretas deste servidor."
-        ].join("\n")
-      );
-      return;
-    }
-  }
-};
 
 export const verificarCommand: SlashCommand = {
   data: new SlashCommandBuilder()
