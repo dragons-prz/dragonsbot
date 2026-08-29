@@ -19,6 +19,10 @@ import {
   PanelConfig,
   PanelJob,
   Recruitment,
+  RecruitmentDraft,
+  RecruitmentFlowConfig,
+  CreateRecruitmentDraftInput,
+  UpdateRecruitmentDraftInput,
   RecruitmentApprovalMessage,
   RoleConfigKey,
   SupportCategoryConfig,
@@ -44,6 +48,7 @@ export interface DragonsStore {
   markMemberEntryRecruited(guildId: string, userId: string, recruiterUserId: string, approvedByUserId: string, recruitmentId: number): Promise<MemberEntry | null>;
   markMemberEntryCreditPending(guildId: string, userId: string, recruiterUserId: string, recruitmentId: number): Promise<MemberEntry | null>;
   markMemberEntryCredited(guildId: string, userId: string, recruiterUserId: string, approvedByUserId: string, recruitmentId: number): Promise<MemberEntry | null>;
+  markMemberEntryRecruitmentRejected(guildId: string, userId: string, rejectedByUserId: string): Promise<MemberEntry | null>;
   markMemberEntryLeft(guildId: string, userId: string): Promise<MemberEntry | null>;
 
   enqueueMemberActionJob(input: EnqueueMemberActionJobInput): Promise<EnqueueMemberActionJobResult>;
@@ -60,6 +65,27 @@ export interface DragonsStore {
    */
   watchPendingMemberActionJobs(onPending: () => void): () => void;
 
+  /**
+   * Configuracao do fluxo de recrutamento (`recruitmentConfigs/{guildId}`).
+   * Escrita SO pela dragons-platform; o bot so le. Documento ausente ou
+   * parcial cai nos defaults de `DEFAULT_RECRUITMENT_FLOW_CONFIG`.
+   */
+  getRecruitmentFlowConfig(guildId: string): Promise<RecruitmentFlowConfig>;
+
+  /**
+   * Rascunhos do wizard de 3 etapas (`recruitmentDrafts/{draftId}`). Escrita
+   * exclusiva do bot. O rascunho carrega o snapshot da apresentacao, entao
+   * mudar a config no painel no meio de um wizard nao muda o wizard aberto.
+   */
+  createRecruitmentDraft(input: CreateRecruitmentDraftInput): Promise<RecruitmentDraft>;
+  getRecruitmentDraft(id: string): Promise<RecruitmentDraft | null>;
+  setRecruitmentDraftMessage(id: string, channelId: string, messageId: string): Promise<void>;
+  updateRecruitmentDraftSelection(id: string, input: UpdateRecruitmentDraftInput): Promise<RecruitmentDraft | null>;
+  cancelRecruitmentDraft(id: string): Promise<RecruitmentDraft | null>;
+  markRecruitmentDraftSubmitted(id: string, recruitmentId: number): Promise<RecruitmentDraft | null>;
+  /** Apaga os rascunhos vencidos e devolve os que ainda estavam abertos (para editar as mensagens). */
+  expireStaleRecruitmentDrafts(): Promise<RecruitmentDraft[]>;
+
   createRecruitment(input: CreateRecruitmentInput): Promise<Recruitment>;
   getRecruitment(id: number): Promise<Recruitment | null>;
   findPendingRecruitmentByUser(guildId: string, recruitUserId: string): Promise<Recruitment | null>;
@@ -67,6 +93,9 @@ export interface DragonsStore {
   addRecruitmentApprovalMessage(input: RecruitmentApprovalMessage): Promise<void>;
   getRecruitmentApprovalMessages(recruitmentId: number): Promise<RecruitmentApprovalMessage[]>;
   deletePendingRecruitment(id: number): Promise<void>;
+  setRecruitmentSheetMessage(id: number, channelId: string, messageId: string): Promise<void>;
+  /** Transacao: so `pending` -> `rejected`. Retorna `null` se ja nao estava pendente. */
+  rejectRecruitment(id: number, rejectedByUserId: string): Promise<Recruitment | null>;
   approveRecruitment(id: number, approvedByUserId: string): Promise<Recruitment | null>;
   approveRecruitmentAndAddMemberPoints(id: number, approvedByUserId: string, points: number, reason: string): Promise<ApprovedRecruitmentResult | null>;
 

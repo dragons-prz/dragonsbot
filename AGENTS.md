@@ -21,7 +21,8 @@ se o comportamento mudar.
 
 ```
 src/
-  commands/     # comandos slash (/config, /recrutar, /verificar, /pontos, /ranking, /painel, /blacklist) + registry
+  commands/     # comandos slash (/config, /recrutar, /verificar, /pontos, /pontos-dar, /ranking, /painel, /blacklist) + registry
+    recruitment/  # fluxo de recrutamento em 3 etapas: wizard, ficha e montagem das mensagens
   config/       # leitura/validação de variáveis de ambiente
   domain/       # tipos de domínio
   storage/      # interface DragonsStore + implementação Firestore
@@ -89,6 +90,16 @@ Sempre rode `npm run build` antes de reportar uma mudança como concluída.
 - Mudanças em pontuação/hierarquia devem manter a regra de que pontos ficam no
   perfil genérico de membro (`members`), não em uma entidade exclusiva de
   recrutador — áreas futuras somam no mesmo perfil.
+- O fluxo de `/recrutar` é configurado **só** pela `dragons-platform`
+  (`recruitmentConfigs/{guildId}`); não adicione subcomando de `/config` para
+  isso. Os tipos `RecruitmentFlowConfig` e companhia em `src/domain/types.ts`
+  são espelho de `dragons-platform/shared/src/recruitment-config.ts`: mudança
+  de forma exige PR coordenado nos dois repositórios.
+- O bot congela a configuração no início de cada recrutamento
+  (`RecruitmentPresentationSnapshot` no rascunho, `sheetPresentation` no
+  recrutamento). Toda montagem de mensagem lê o snapshot, nunca a configuração
+  viva — é o que garante que editar o painel valha só para recrutamentos novos
+  e que nenhuma mensagem precise ser apagada e reposta.
 - Ao alterar o schema de dados do Firestore, avalie se é necessário um script
   de migração (padrão: `src/migrate-firestore-members.ts`) e documente as
   coleções afetadas no README.

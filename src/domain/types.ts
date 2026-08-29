@@ -57,9 +57,9 @@ export type ChannelConfigKey =
   | "verification"
   | "exit";
 export type NumberConfigKey = "points" | "credit-window-hours";
-export type RecruitmentStatus = "pending" | "approved";
+export type RecruitmentStatus = "pending" | "approved" | "rejected";
 export type RecruitmentKind = "standard" | "credit";
-export type MemberEntryStatus = "pending" | "verified_direct" | "recruitment_pending" | "recruited" | "credit_pending" | "credited" | "left";
+export type MemberEntryStatus = "pending" | "verified_direct" | "recruitment_pending" | "recruited" | "credit_pending" | "credited" | "recruitment_rejected" | "left";
 export type MemberActionJobType = "verify_member" | "approve_recruitment";
 export type MemberActionJobStatus = "pending" | "processing" | "completed" | "failed" | "cancelled";
 
@@ -93,6 +93,26 @@ export interface Recruitment {
   approvedByUserId: string | null;
   createdAt: string;
   approvedAt: string | null;
+  /**
+   * Snapshots do que foi escolhido no wizard. Ficam gravados no
+   * recrutamento para que editar a configuracao no painel NAO reescreva
+   * recrutamentos ja criados nem mude uma ficha ja postada. Recrutamentos
+   * legados (fluxo antigo de DM) tem `null`/vazio aqui.
+   */
+  starterRoleOptionId: string | null;
+  starterRoleId: string | null;
+  starterRoleLabel: string | null;
+  areaOptionIds: string[];
+  areaRoleIds: string[];
+  areaLabels: string[];
+  /** Pontos calculados no envio; `0` cai no fallback `GuildConfig.recruitmentPoints`. */
+  points: number;
+  sheetChannelId: string | null;
+  sheetMessageId: string | null;
+  /** Formato da ficha, congelado no envio. `null` nos recrutamentos legados. */
+  sheetPresentation: RecruitmentSheetSnapshot | null;
+  rejectedByUserId: string | null;
+  rejectedAt: string | null;
 }
 
 export interface MemberEntry {
@@ -166,6 +186,14 @@ export interface CreateRecruitmentInput {
   recruitUserId: string;
   recruiterUserId: string;
   kind?: RecruitmentKind;
+  starterRoleOptionId?: string | null;
+  starterRoleId?: string | null;
+  starterRoleLabel?: string | null;
+  areaOptionIds?: string[];
+  areaRoleIds?: string[];
+  areaLabels?: string[];
+  points?: number;
+  sheetPresentation?: RecruitmentSheetSnapshot | null;
 }
 
 export interface CreateMemberEntryInput {
@@ -367,4 +395,346 @@ export interface PanelJob {
   error: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/* ------------------------------------------------------------------ *
+ * Recrutamento em 3 etapas
+ *
+ * `RecruitmentFlowConfig` e os tipos que ela compoe sao ESPELHO de
+ * `dragons-platform/shared/src/recruitment-config.ts`. O documento
+ * `recruitmentConfigs/{guildId}` e escrito SO pela plataforma; o bot so le.
+ * Mudanca de forma = PR coordenado nos dois repos.
+ *
+ * Spec: `docs/specs/2026-08-29-recrutamento-multi-etapas.md`.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Uma mensagem do fluxo, no mesmo modelo das mensagens de painel:
+ * `embed` (classico) ou `container` (Components V2). `title` e `description`
+ * sao templates — `{chave}` e trocado por `renderTemplate`.
+ */
+export interface RecruitmentMessageConfig {
+  layout: PanelLayout;
+  title: string;
+  description: string;
+  imageUrl: string | null;
+  color: string | null;
+}
+
+/**
+ * Um botao do fluxo. `label` vazio e valido quando ha `emoji` (botao so com
+ * icone). `emoji` customizado precisa ser `<:nome:id>` — o Discord nao
+ * resolve `:shortcode:`.
+ */
+export interface RecruitmentButtonConfig {
+  label: string;
+  emoji: string | null;
+  style: PanelButtonStyle;
+}
+
+export interface RecruitmentSelectConfig {
+  placeholder: string;
+}
+
+export interface RecruitmentStarterRoleOption {
+  id: string;
+  label: string;
+  description: string | null;
+  emoji: string | null;
+  roleId: string;
+  order: number;
+}
+
+export interface RecruitmentAreaOption {
+  id: string;
+  label: string;
+  description: string | null;
+  emoji: string | null;
+  roleIds: string[];
+  /** Pontos creditados ao RECRUTADOR por esta area. */
+  points: number;
+  order: number;
+}
+
+export interface RecruitmentStepOneConfig {
+  message: RecruitmentMessageConfig;
+  select: RecruitmentSelectConfig;
+  cancelButton: RecruitmentButtonConfig;
+}
+
+export interface RecruitmentStepTwoConfig {
+  message: RecruitmentMessageConfig;
+  select: RecruitmentSelectConfig;
+  backButton: RecruitmentButtonConfig;
+  cancelButton: RecruitmentButtonConfig;
+}
+
+export interface RecruitmentStepThreeConfig {
+  message: RecruitmentMessageConfig;
+  confirmButton: RecruitmentButtonConfig;
+  restartButton: RecruitmentButtonConfig;
+  cancelButton: RecruitmentButtonConfig;
+}
+
+export interface RecruitmentOutcomeConfig {
+  submitted: RecruitmentMessageConfig;
+  cancelled: RecruitmentMessageConfig;
+  expired: RecruitmentMessageConfig;
+}
+
+export type RecruitmentAvatarPlacement = "thumbnail" | "image" | "none";
+
+export interface RecruitmentSheetConfig {
+  channelId: string | null;
+  message: RecruitmentMessageConfig;
+  approveButton: RecruitmentButtonConfig;
+  rejectButton: RecruitmentButtonConfig;
+  queued: RecruitmentMessageConfig;
+  approved: RecruitmentMessageConfig;
+  rejected: RecruitmentMessageConfig;
+  approvedButton: RecruitmentButtonConfig;
+  rejectedButton: RecruitmentButtonConfig;
+  avatarPlacement: RecruitmentAvatarPlacement;
+  mentionApprovers: boolean;
+}
+
+export type RecruitmentPointsMode = "sum" | "highest";
+
+export interface RecruitmentFlowConfig {
+  guildId: string;
+  starterRoles: RecruitmentStarterRoleOption[];
+  areas: RecruitmentAreaOption[];
+  minAreas: number;
+  maxAreas: number;
+  stepOne: RecruitmentStepOneConfig;
+  stepTwo: RecruitmentStepTwoConfig;
+  stepThree: RecruitmentStepThreeConfig;
+  outcome: RecruitmentOutcomeConfig;
+  sheet: RecruitmentSheetConfig;
+  approverRoleIds: string[];
+  pointsGrantRoleIds: string[];
+  pointsMode: RecruitmentPointsMode;
+  minManualPoints: number;
+  maxManualPoints: number;
+  draftTtlMinutes: number;
+  rolePendingText: string;
+  areasPendingText: string;
+  notRecruiterMessage: string;
+  notApproverMessage: string;
+  notDraftOwnerMessage: string;
+  notConfiguredMessage: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function recruitmentMessage(
+  title: string,
+  description: string,
+  color: string | null = "#5865F2"
+): RecruitmentMessageConfig {
+  return { layout: "container", title, description, imageUrl: null, color };
+}
+
+function recruitmentButton(
+  label: string,
+  style: PanelButtonStyle,
+  emoji: string | null = null
+): RecruitmentButtonConfig {
+  return { label, emoji, style };
+}
+
+const WIZARD_FIELDS = [
+  "**Recrutado:** {recruited}",
+  "**Cargo:** `{role}`",
+  "**Areas:** `{areas}`"
+].join("\n");
+
+const SHEET_FIELDS = [
+  "**Recrutador:** {recruiter}",
+  "**Recrutado:** {recruited} (`{recruitedId}`)",
+  "**Cargo:** `{role}`",
+  "**Areas:** `{areas}`",
+  "**Conta criada:** {createdAt}"
+].join("\n");
+
+/**
+ * Default aplicado quando `recruitmentConfigs/{guildId}` nao existe ou tem
+ * campo ausente — os MESMOS valores que a dragons-platform aplica do outro
+ * lado. Listas vazias e `sheet.channelId` nulo significam "ainda nao
+ * configurado no painel": o comando responde `notConfiguredMessage`.
+ */
+export const DEFAULT_RECRUITMENT_FLOW_CONFIG: Omit<
+  RecruitmentFlowConfig,
+  "guildId" | "createdAt" | "updatedAt"
+> = {
+  starterRoles: [],
+  areas: [],
+  minAreas: 1,
+  maxAreas: 2,
+  stepOne: {
+    message: recruitmentMessage(
+      "Recrutamento - etapa {step}/{total}",
+      `${WIZARD_FIELDS}\n\n*Selecione o cargo de iniciante*`
+    ),
+    select: { placeholder: "Selecione o cargo de iniciante" },
+    cancelButton: recruitmentButton("Cancelar", "Danger")
+  },
+  stepTwo: {
+    message: recruitmentMessage(
+      "Recrutamento - etapa {step}/{total}",
+      `${WIZARD_FIELDS}\n\n*Selecione ate {max} areas*`
+    ),
+    select: { placeholder: "Selecione as areas" },
+    backButton: recruitmentButton("Voltar", "Secondary"),
+    cancelButton: recruitmentButton("Cancelar", "Danger")
+  },
+  stepThree: {
+    message: recruitmentMessage(
+      "Confirmar recrutamento",
+      `${WIZARD_FIELDS}\n\n*Confirme para aplicar os cargos e gerar a ficha*`
+    ),
+    confirmButton: recruitmentButton("Confirmar", "Success"),
+    restartButton: recruitmentButton("Reiniciar", "Secondary"),
+    cancelButton: recruitmentButton("Cancelar", "Danger")
+  },
+  outcome: {
+    submitted: recruitmentMessage(
+      "Recrutamento enviado",
+      `${WIZARD_FIELDS}\n\nA ficha foi enviada para aprovacao da gerencia.`,
+      "#F08C00"
+    ),
+    cancelled: recruitmentMessage(
+      "Recrutamento cancelado",
+      "O recrutamento de {recruited} foi cancelado por {recruiter}.",
+      "#868E96"
+    ),
+    expired: recruitmentMessage(
+      "Recrutamento expirado",
+      "O recrutamento de {recruited} expirou sem ser concluido. Rode `/recrutar` de novo.",
+      "#868E96"
+    )
+  },
+  sheet: {
+    channelId: null,
+    message: recruitmentMessage("Ficha de recrutamento", SHEET_FIELDS),
+    approveButton: recruitmentButton("Confirmar", "Success"),
+    rejectButton: recruitmentButton("Rejeitar", "Danger"),
+    queued: recruitmentMessage(
+      "Ficha em processamento",
+      `${SHEET_FIELDS}\n\nConfirmada por {approver}. Aplicando os cargos...`,
+      "#F08C00"
+    ),
+    approved: recruitmentMessage(
+      "Recrutamento aprovado",
+      `${SHEET_FIELDS}\n\nAprovado por {approver}. O recrutador recebeu **{points}** pontos.`,
+      "#2F9E44"
+    ),
+    rejected: recruitmentMessage(
+      "Recrutamento rejeitado",
+      `${SHEET_FIELDS}\n\nRejeitado por {approver}.`,
+      "#C92A2A"
+    ),
+    approvedButton: recruitmentButton("Aprovado", "Success"),
+    rejectedButton: recruitmentButton("Rejeitado", "Danger"),
+    avatarPlacement: "thumbnail",
+    mentionApprovers: true
+  },
+  approverRoleIds: [],
+  pointsGrantRoleIds: [],
+  pointsMode: "sum",
+  minManualPoints: -100,
+  maxManualPoints: 100,
+  draftTtlMinutes: 15,
+  rolePendingText: "aguardando selecao",
+  areasPendingText: "aguardando",
+  notRecruiterMessage: "Voce nao possui o cargo de recrutamento.",
+  notApproverMessage: "Voce nao tem permissao para essa acao.",
+  notDraftOwnerMessage: "Apenas quem iniciou este recrutamento pode usar estes botoes.",
+  notConfiguredMessage:
+    "O fluxo de recrutamento ainda nao foi configurado no painel (cargos de iniciante, areas e canal da ficha)."
+};
+
+/** Soma (default) ou maior valor dos pontos das areas escolhidas. */
+export function calculateRecruitmentPoints(
+  areas: readonly RecruitmentAreaOption[],
+  mode: RecruitmentPointsMode
+): number {
+  if (areas.length === 0) {
+    return 0;
+  }
+  const points = areas.map((area) => area.points);
+  return mode === "highest" ? Math.max(...points) : points.reduce((total, value) => total + value, 0);
+}
+
+/* ------------------------------------------------------------------ *
+ * Rascunho do wizard e snapshot de apresentacao
+ *
+ * Escrita EXCLUSIVA do bot (`recruitmentDrafts/{draftId}`).
+ * ------------------------------------------------------------------ */
+
+/**
+ * Tudo que o wizard precisa para se desenhar, congelado no `/recrutar`.
+ *
+ * E o que garante que mudar a configuracao no painel valha so para
+ * recrutamentos NOVOS: um wizard aberto termina no formato em que comecou,
+ * e nenhuma mensagem precisa ser reposta (o Discord nao deixa editar uma
+ * mensagem alternando entre embed e Components V2).
+ */
+export interface RecruitmentPresentationSnapshot {
+  stepOne: RecruitmentStepOneConfig;
+  stepTwo: RecruitmentStepTwoConfig;
+  stepThree: RecruitmentStepThreeConfig;
+  outcome: RecruitmentOutcomeConfig;
+  starterRoles: RecruitmentStarterRoleOption[];
+  areas: RecruitmentAreaOption[];
+  minAreas: number;
+  maxAreas: number;
+  rolePendingText: string;
+  areasPendingText: string;
+  notDraftOwnerMessage: string;
+}
+
+/** Idem para a ficha, congelado no envio; vive no `Recruitment`. */
+export type RecruitmentSheetSnapshot = RecruitmentSheetConfig;
+
+export type RecruitmentDraftStatus =
+  | "selecting_role"
+  | "selecting_areas"
+  | "confirming"
+  | "submitted"
+  | "cancelled"
+  | "expired";
+
+export interface RecruitmentDraft {
+  id: string;
+  guildId: string;
+  channelId: string;
+  messageId: string | null;
+  recruiterUserId: string;
+  recruitUserId: string;
+  kind: RecruitmentKind;
+  status: RecruitmentDraftStatus;
+  starterRoleId: string | null;
+  areaIds: string[];
+  presentation: RecruitmentPresentationSnapshot;
+  recruitmentId: number | null;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+}
+
+export interface CreateRecruitmentDraftInput {
+  guildId: string;
+  channelId: string;
+  recruiterUserId: string;
+  recruitUserId: string;
+  kind: RecruitmentKind;
+  presentation: RecruitmentPresentationSnapshot;
+  ttlMinutes: number;
+}
+
+export interface UpdateRecruitmentDraftInput {
+  starterRoleId?: string | null;
+  areaIds?: string[];
+  status: RecruitmentDraftStatus;
 }

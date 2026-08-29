@@ -41,6 +41,7 @@ const WRITE_PREFIXES = [
   "seed",
   "claim", // claimNext* / claimTicket*: query + transacao que marca o job/ticket
   "reset", // resetStale*: query + batch write
+  "expire", // expireStaleRecruitmentDrafts: query + batch write
   "close", // closeTicket: transacao (o metodo de ciclo de vida `close` e passthrough)
   "release" // releaseTicketSlot: delete
 ];
