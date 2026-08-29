@@ -348,54 +348,13 @@ export const recrutarCommand: SlashCommand = {
       return;
     }
 
-    // Mesma regra do fluxo antigo: quem ja e membro so pode render CREDITO ao
-    // recrutador, dentro da janela e desde que ninguem tenha sido creditado.
-    const memberEntry = await store.getMemberEntry(guildId, recruitUser.id);
+    // Quem ja e membro tambem pode ser recrutado de novo — por exemplo para
+    // uma area nova (Recrutamento, Passtime, Suporte), sem ser a familia. A
+    // aprovacao da gerencia na ficha e a unica trava necessaria: nao ha mais
+    // janela de tempo nem exigencia de entrada registrada pelo bot, e a
+    // mesma pessoa pode ser recrutada mais de uma vez para areas diferentes.
     const recruitAlreadyMember = recruitMember.roles.cache.has(config.memberRoleId);
     const kind = recruitAlreadyMember ? "credit" : "standard";
-
-    if (recruitAlreadyMember) {
-      if (!memberEntry) {
-        await interaction.editReply(
-          "Este usuario ja e membro e nao possui entrada recente registrada pelo bot para credito."
-        );
-        return;
-      }
-
-      const windowMs = config.recruitmentCreditWindowHours * 60 * 60 * 1000;
-      if (Date.now() - new Date(memberEntry.joinedAt).getTime() > windowMs) {
-        logger.warn("recruitment.draft_blocked", {
-          reason: "credit_window_expired",
-          guildId,
-          recruiterUserId: recruiter.id,
-          recruitUserId: recruitUser.id,
-          joinedAt: memberEntry.joinedAt
-        });
-        await interaction.editReply(
-          `Este usuario ja foi verificado e a janela de ${config.recruitmentCreditWindowHours}h para credito expirou.`
-        );
-        return;
-      }
-
-      if (
-        memberEntry.recruiterUserId ||
-        memberEntry.creditedAt ||
-        memberEntry.status === "recruitment_pending" ||
-        memberEntry.status === "credit_pending"
-      ) {
-        logger.warn("recruitment.draft_blocked", {
-          reason: "credit_already_claimed_or_pending",
-          guildId,
-          recruiterUserId: recruiter.id,
-          recruitUserId: recruitUser.id,
-          entryStatus: memberEntry.status
-        });
-        await interaction.editReply(
-          "Este usuario ja possui recrutador creditado ou pedido de credito pendente."
-        );
-        return;
-      }
-    }
 
     const draft = await store.createRecruitmentDraft({
       guildId,
