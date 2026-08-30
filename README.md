@@ -301,21 +301,19 @@ Mostra o ranking de membros do servidor, ordenado por pontos e depois por recrut
 
 ### `/painel`
 
-Cria paineis informativos: uma mensagem com titulo, descricao, imagem opcional, cor lateral opcional e ate 25 botoes, organizados em linhas de 5. Ao clicar em um botao, o usuario recebe uma resposta privada (visivel so para ele) em formato de embed, com o texto, a imagem e a cor configurados para aquele botao — por ser um embed, a resposta sempre tem a barra colorida do Discord a esquerda, mesmo quando nenhuma cor customizada foi definida (nesse caso o Discord usa a cor padrao dele). Apenas administradores podem usar. Subcomandos:
+Um painel e uma **lista ordenada de blocos** (`blocks: PanelBlock[]`), sempre renderizada como um **Container (Components V2)**. Nao ha mais `layout: "embed"` nem `kind`. Tipos de bloco: `text` (markdown), `image` (banner / `MediaGallery`), `separator` (`divider` + `spacing`), `buttons` (1..25, quebrado em linhas de 5) e `select` (no maximo 1 por painel). O editor de verdade e a `dragons-platform` (arrastar para reordenar, barra de formatacao, seletor de emojis do servidor); o `/painel` fica como utilitario. Apenas administradores. Subcomandos:
 
-- `criar id:<texto> titulo:<texto> descricao:<texto> cor:<opcional>` - cria um painel novo (id e usado internamente, deve ser unico no servidor). `cor` e hex (ex: `#E03131`); se informada com formato invalido, o comando recusa com uma mensagem de erro.
-- `set-imagem id:<texto> imagem:<anexo>` - define/atualiza a imagem do painel.
-- `set-cor id:<texto> cor:<texto>` - define/atualiza a cor lateral do embed do painel. Aceita hex (ex: `#E03131`) ou a palavra `limpar` (tambem aceita `nenhuma`, `remover`, `none`) para voltar a cor padrao do Discord (`color: null`).
-- `add-botao id:<texto> label:<texto> resposta:<texto> estilo:<opcional> emoji:<opcional> resposta-imagem:<opcional> resposta-cor:<opcional>` - adiciona um botao. `estilo` pode ser Cinza (padrao), Azul, Verde ou Vermelho. `resposta-imagem` e um anexo exibido na resposta ao clicar; `resposta-cor` e hex (ex: `#E03131`) para a cor lateral dessa resposta. Ambos sao opcionais e ficam `null` quando omitidos.
-- `remover-botao id:<texto> botao-id:<texto>` - remove um botao pelo id gerado a partir do label. Nao existe "editar botao": para mudar label, resposta, imagem ou cor de um botao ja existente, remova e recrie com `add-botao`.
-- `publicar id:<texto> canal:<canal>` - publica a mensagem do painel no canal indicado. Se o painel ja tiver sido publicado antes nesse mesmo canal (`publishedChannelId`/`publishedMessageId`), o comando **edita** a mensagem existente em vez de enviar uma nova; se a mensagem publicada anteriormente tiver sido apagada, ele envia uma nova mensagem normalmente. A resposta do comando deixa claro se o painel foi publicado ou atualizado.
-- `listar` - lista os paineis do servidor com a quantidade de botoes/opcoes de cada um.
+- `criar id:<texto> titulo:<texto> descricao:<opcional> cor:<opcional>` - cria um painel com um unico bloco de texto (`## titulo`, e `\n\n descricao` se informada). `cor` e hex (ex: `#E03131`).
+- `set-imagem id:<texto> imagem:<anexo>` - upsert de um bloco `image` (atualiza o 1o bloco de banner, ou insere um no topo).
+- `set-cor id:<texto> cor:<texto>` - define/limpa a cor de acento do container. Aceita hex ou `limpar` (`nenhuma`/`remover`/`none`).
+- `add-botao id:<texto> label:<texto> resposta:<texto> estilo:<opcional> emoji:<opcional> resposta-imagem:<opcional> resposta-cor:<opcional>` - anexa um botao ao ultimo bloco `buttons` (cria um se nao houver). `estilo`: Cinza (padrao), Azul, Verde ou Vermelho.
+- `remover-botao id:<texto> botao-id:<texto>` - remove o botao por id em qualquer bloco `buttons` (o bloco some se ficar vazio).
+- `publicar id:<texto> canal:<canal>` - publica/edita a mensagem no canal. Ja publicado nesse canal -> **edita**; mensagem apagada -> envia nova.
+- `listar` - lista os paineis com a quantidade de blocos de cada um.
 
-Os paineis ficam salvos na colecao `panels` do Firestore, o que permite reconfigurar sem reiniciar o bot e e usada pela interface web de configuracao (`dragons-platform`) para criar e editar paineis. Cada painel guarda `publishedChannelId`/`publishedMessageId` (nulos ate a primeira publicacao) para saber onde a mensagem foi publicada por ultimo, alem de `color: string | null` (cor lateral do embed principal, hex tipo `#E03131`). Cada botao (`PanelButtonConfig`) guarda tambem `responseImageUrl: string | null` (imagem exibida na resposta) e `responseColor: string | null` (cor lateral da resposta). Documentos criados antes dessa mudanca nao tem esses campos gravados no Firestore; o bot os trata como ausentes = `null` ao ler, sem quebrar.
+Os paineis ficam na colecao `panels` do Firestore, compartilhada com a `dragons-platform`. Cada painel guarda `publishedChannelId`/`publishedMessageId` (nulos ate a 1a publicacao) e `color: string | null`. **Migracao:** documentos no formato antigo (`title`/`description`/`imageUrl`/`kind`/`buttons`/`select` no topo, sem `blocks`) sao convertidos na leitura (`mapPanel` / `panelBlocksFromLegacy`) para `[image?, text(## titulo\n\n descricao), buttons|select?]` — sem script; o doc so ganha `blocks` no proximo save.
 
-**Layout do painel (`layout`).** `layout: "embed" | "container"` (ausente = `"embed"`). No `embed` (formato historico) a imagem fica embaixo e o `title` do embed nao renderiza emoji customizado do servidor. No `container` a mensagem usa **Components V2** (`ContainerBuilder`): a imagem vira um banner no topo e o titulo/descricao viram texto markdown (emoji de qualquer tipo, em qualquer lugar). A flag `IsComponentsV2` **nao pode ser ligada/desligada editando** uma mensagem ja publicada — quando o `layout` de um painel publicado muda, o `publishPanelToChannel` apaga a mensagem antiga e reposta uma nova (evento `panel.layout_reposted`, `panelJob` fica `published` em vez de `updated`).
-
-**Tipo do painel e acoes (`kind` / `action`).** Um painel tem `kind: "buttons" | "select" | "text"` (ausente = `"buttons"`). Quando `kind === "select"`, o painel mostra um unico dropdown (`PanelSelectConfig`: `placeholder` + `options[]`) no lugar das linhas de botoes; cada opcao tem `label`, `description`, `emoji` e uma acao. Quando `kind === "text"`, o painel e so a mensagem (titulo/descricao/imagem/cor/layout) — os botoes sao **opcionais** (0..25) e nao ha dropdown; e o formato dos paineis informativos (regras, avisos) e do painel de verificacao. Cada botao **e** cada opcao carrega uma `PanelActionConfig`:
+**Acoes (`action`).** Cada botao **e** cada opcao de dropdown carrega uma `PanelActionConfig`:
 
 - `{ type: "reply", response, responseImageUrl, responseColor }` - o comportamento historico (embed efemero). Documentos antigos sem `action` sao lidos como esta acao, montada a partir dos campos legados do botao.
 - `{ type: "run", actionId, params }` - dispara uma acao registrada no bot (`src/commands/panel-actions/registry.ts`). Hoje ha duas: `support-ticket` e `verification-ticket` (ver abaixo). O `/painel add-botao` so cria acoes `reply`; acoes `run` sao configuradas pela `dragons-platform`.
@@ -565,7 +563,7 @@ Eventos principais:
 - `panel_job.worker_failed` (inclui `consecutiveFailures` e `nextRetryMs` do backoff)
 - `panel_job.watch_failed` (observador `onSnapshot` caiu; reassina sozinho)
 - `panel.action_run` / `panel.action_unknown`
-- `panel.layout_reposted` (layout mudou; mensagem antiga apagada e repostada)
+- `panel.reposted_as_v2` (mensagem publicada legada sem a flag Components V2; apagada e repostada)
 - `ticket.opened` / `ticket.open_denied` / `ticket.open_failed`
 - `ticket.claimed` / `ticket.closed`
 - `ticket.opener_add_failed` / `ticket.ping_edit_failed`

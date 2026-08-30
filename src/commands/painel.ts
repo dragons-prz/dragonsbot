@@ -14,6 +14,8 @@ import {
   MessageFlags,
   PermissionFlagsBits,
   resolveColor,
+  SeparatorBuilder,
+  SeparatorSpacingSize,
   SlashCommandBuilder,
   StringSelectMenuBuilder,
   StringSelectMenuInteraction,
@@ -22,7 +24,14 @@ import {
 } from "discord.js";
 import newrelic from "newrelic";
 
-import { PanelActionConfig, PanelButtonStyle, PanelConfig, PanelJob } from "../domain/types";
+import {
+  PanelActionConfig,
+  PanelButtonConfig,
+  PanelButtonStyle,
+  PanelConfig,
+  PanelJob,
+  PanelSelectBlock
+} from "../domain/types";
 import { memberIsAdmin, requireGuildMember, slugify } from "../utils/discord";
 import { startJobWorker } from "../utils/jobWorker";
 import { logger } from "../utils/logger";
@@ -41,50 +50,27 @@ const PANEL_JOB_STALE_AFTER_MS = 5 * 60 * 1000;
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
 const CLEAR_COLOR_KEYWORDS = new Set(["limpar", "nenhuma", "remover", "none"]);
 
-/**
- * `true` quando o painel nao tem nenhum componente para renderizar/publicar.
- * Painel `text` e informativo: publica so com a mensagem, botoes opcionais.
- */
+/** `true` quando o painel nao tem nenhum bloco para renderizar/publicar. */
 export function panelIsEmpty(panel: PanelConfig): boolean {
-  if (panel.kind === "text") {
-    return false;
-  }
-  return panel.kind === "select"
-    ? !panel.select || panel.select.options.length === 0
-    : panel.buttons.length === 0;
+  return panel.blocks.length === 0;
+}
+
+/** Todos os botoes do painel (achatando os blocos `buttons`). */
+export function panelButtons(panel: PanelConfig): PanelButtonConfig[] {
+  return panel.blocks.flatMap((block) => (block.type === "buttons" ? block.buttons : []));
 }
 
 type PanelComponentRow = ActionRowBuilder<MessageActionRowComponentBuilder>;
 
-/** As linhas de componentes (dropdown OU botoes) — comuns aos dois layouts. */
-function buildPanelComponentRows(panel: PanelConfig): PanelComponentRow[] {
-  if (panel.kind === "select" && panel.select && panel.select.options.length > 0) {
-    const menu = new StringSelectMenuBuilder()
-      .setCustomId(`${SELECT_CUSTOM_ID_PREFIX}${panel.id}`)
-      .setPlaceholder(panel.select.placeholder || "Selecione uma opcao")
-      .addOptions(
-        panel.select.options.map((option) => {
-          const builder = new StringSelectMenuOptionBuilder().setLabel(option.label).setValue(option.id);
-          if (option.description) {
-            builder.setDescription(option.description);
-          }
-          if (option.emoji) {
-            builder.setEmoji(option.emoji);
-          }
-          return builder;
-        })
-      );
-    return [new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(menu)];
-  }
-
+/** Um bloco `buttons` -> linhas de ate 5 botoes. */
+function buttonRows(panelId: string, buttons: PanelButtonConfig[]): PanelComponentRow[] {
   const rows: PanelComponentRow[] = [];
-  for (let i = 0; i < panel.buttons.length; i += 5) {
-    const chunk = panel.buttons.slice(i, i + 5);
+  for (let i = 0; i < buttons.length; i += 5) {
     rows.push(
       new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
-        chunk.map((button) => {
+        buttons.slice(i, i + 5).map((button) => {
           const builder = new ButtonBuilder()
-            .setCustomId(`${CUSTOM_ID_PREFIX}${panel.id}:${button.id}`)
+            .setCustomId(`${CUSTOM_ID_PREFIX}${panelId}:${button.id}`)
             .setLabel(button.label)
             .setStyle(BUTTON_STYLE_MAP[button.style]);
           if (button.emoji) {
@@ -98,41 +84,68 @@ function buildPanelComponentRows(panel: PanelConfig): PanelComponentRow[] {
   return rows;
 }
 
+/** Um bloco `select` -> uma linha com o dropdown. */
+function selectRow(panelId: string, block: PanelSelectBlock): PanelComponentRow {
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`${SELECT_CUSTOM_ID_PREFIX}${panelId}`)
+    .setPlaceholder(block.placeholder || "Selecione uma opcao")
+    .addOptions(
+      block.options.map((option) => {
+        const builder = new StringSelectMenuOptionBuilder()
+          .setLabel(option.label)
+          .setValue(option.id);
+        if (option.description) {
+          builder.setDescription(option.description);
+        }
+        if (option.emoji) {
+          builder.setEmoji(option.emoji);
+        }
+        return builder;
+      })
+    );
+  return new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(menu);
+}
+
 /**
- * Monta o payload da mensagem do painel. Dois formatos:
- * - `layout: "embed"` (padrao): `{ embeds: [embed], components }`.
- * - `layout: "container"`: Components V2 — banner no topo, titulo/descricao
- *   como texto markdown, e a flag `IsComponentsV2` (sem `embeds`/`content`).
+ * Monta o payload da mensagem do painel: sempre um Container (Components V2),
+ * montado na ordem dos blocos. Botao no meio, banner no rodape, varios
+ * blocos de texto com separadores — o que o editor montar.
  */
 export function buildPanelMessage(panel: PanelConfig) {
-  const rows = buildPanelComponentRows(panel);
-
-  if (panel.layout === "container") {
-    const container = new ContainerBuilder();
-    if (panel.color) {
-      container.setAccentColor(resolveColor(panel.color as ColorResolvable));
-    }
-    if (panel.imageUrl) {
-      container.addMediaGalleryComponents(
-        new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(panel.imageUrl))
-      );
-    }
-    const text = panel.description ? `## ${panel.title}\n${panel.description}` : `## ${panel.title}`;
-    container.addTextDisplayComponents(new TextDisplayBuilder().setContent(text));
-    for (const row of rows) {
-      container.addActionRowComponents(row);
-    }
-    return { components: [container], flags: MessageFlags.IsComponentsV2 as const };
-  }
-
-  const embed = new EmbedBuilder().setTitle(panel.title).setDescription(panel.description);
-  if (panel.imageUrl) {
-    embed.setImage(panel.imageUrl);
-  }
+  const container = new ContainerBuilder();
   if (panel.color) {
-    embed.setColor(panel.color as ColorResolvable);
+    container.setAccentColor(resolveColor(panel.color as ColorResolvable));
   }
-  return { embeds: [embed], components: rows };
+
+  for (const block of panel.blocks) {
+    if (block.type === "text") {
+      container.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(block.content || "​")
+      );
+    } else if (block.type === "image") {
+      if (block.url) {
+        container.addMediaGalleryComponents(
+          new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(block.url))
+        );
+      }
+    } else if (block.type === "separator") {
+      container.addSeparatorComponents(
+        new SeparatorBuilder()
+          .setDivider(block.divider)
+          .setSpacing(
+            block.spacing === "large" ? SeparatorSpacingSize.Large : SeparatorSpacingSize.Small
+          )
+      );
+    } else if (block.type === "buttons") {
+      for (const row of buttonRows(panel.id, block.buttons)) {
+        container.addActionRowComponents(row);
+      }
+    } else if (block.type === "select") {
+      container.addActionRowComponents(selectRow(panel.id, block));
+    }
+  }
+
+  return { components: [container], flags: MessageFlags.IsComponentsV2 as const };
 }
 
 /**
@@ -191,24 +204,22 @@ async function publishPanelToChannel(
   if (panel.publishedMessageId && panel.publishedChannelId === channelId) {
     const existingMessage = await channel.messages.fetch(panel.publishedMessageId).catch(() => null);
     if (existingMessage) {
-      // A flag `IsComponentsV2` nao pode ser ligada/desligada editando uma
-      // mensagem existente. Se o layout mudou (embed <-> container), apaga a
-      // mensagem antiga e reposta uma nova em vez de editar.
-      const wantsContainer = panel.layout === "container";
-      const isContainerNow = existingMessage.flags.has(MessageFlags.IsComponentsV2);
-      if (wantsContainer === isContainerNow) {
+      // Todo painel e Components V2. Uma mensagem publicada com a flag
+      // `IsComponentsV2` pode ser editada normalmente; so no caso raro de
+      // uma mensagem legada SEM a flag e preciso apagar e repostar (a flag
+      // nao liga/desliga por edicao).
+      if (existingMessage.flags.has(MessageFlags.IsComponentsV2)) {
         await existingMessage.edit(payload);
         await store.setPanelPublishedMessage(panel.guildId, panel.id, channelId, existingMessage.id);
         return { action: "updated", messageId: existingMessage.id };
       }
 
       await existingMessage.delete().catch(() => undefined);
-      logger.info("panel.layout_reposted", {
+      logger.info("panel.reposted_as_v2", {
         guildId: panel.guildId,
         panelId: panel.id,
         channelId,
-        previousMessageId: existingMessage.id,
-        layout: panel.layout
+        previousMessageId: existingMessage.id
       });
       const repostedMessage = await channel.send(payload);
       await store.setPanelPublishedMessage(panel.guildId, panel.id, channelId, repostedMessage.id);
@@ -300,10 +311,10 @@ export const painelCommand: SlashCommand = {
         .setName("criar")
         .setDescription("Cria um novo painel.")
         .addStringOption((option) => option.setName("id").setDescription("Identificador unico do painel.").setRequired(true))
-        .addStringOption((option) => option.setName("titulo").setDescription("Titulo do painel.").setRequired(true))
-        .addStringOption((option) => option.setName("descricao").setDescription("Descricao do painel.").setRequired(true))
+        .addStringOption((option) => option.setName("titulo").setDescription("Titulo do painel (bloco de texto inicial).").setRequired(true))
+        .addStringOption((option) => option.setName("descricao").setDescription("Texto abaixo do titulo (opcional)."))
         .addStringOption((option) =>
-          option.setName("cor").setDescription("Cor lateral do embed, formato hex (ex: #E03131).")
+          option.setName("cor").setDescription("Cor lateral do container, formato hex (ex: #E03131).")
         )
     )
     .addSubcommand((subcommand) =>
@@ -393,7 +404,7 @@ export const painelCommand: SlashCommand = {
     if (subcommand === "criar") {
       const id = slugify(interaction.options.getString("id", true));
       const titulo = interaction.options.getString("titulo", true);
-      const descricao = interaction.options.getString("descricao", true);
+      const descricao = interaction.options.getString("descricao") ?? undefined;
       const cor = interaction.options.getString("cor");
       if (!id) {
         await interaction.reply({ content: "Id invalido. Use letras, numeros ou hifen.", flags: MessageFlags.Ephemeral });
@@ -519,10 +530,7 @@ export const painelCommand: SlashCommand = {
       }
       if (panelIsEmpty(panel)) {
         await interaction.reply({
-          content:
-            panel.kind === "select"
-              ? `Painel \`${id}\` ainda nao tem opcoes no dropdown.`
-              : `Painel \`${id}\` ainda nao tem botoes.`,
+          content: `Painel \`${id}\` nao tem nenhum bloco. Adicione conteudo pela plataforma.`,
           flags: MessageFlags.Ephemeral
         });
         return;
@@ -566,10 +574,8 @@ export const painelCommand: SlashCommand = {
     await interaction.reply({
       content: panels
         .map((panel) => {
-          const count =
-            panel.kind === "select" ? panel.select?.options.length ?? 0 : panel.buttons.length;
-          const unit = panel.kind === "select" ? "opcoes" : "botoes";
-          return `\`${panel.id}\` - ${panel.title} (${count} ${unit})`;
+          const count = panel.blocks.length;
+          return `\`${panel.id}\` - ${count} ${count === 1 ? "bloco" : "blocos"}`;
         })
         .join("\n"),
       flags: MessageFlags.Ephemeral
@@ -589,7 +595,7 @@ export const panelButtonHandler: ButtonHandler = {
 
     const [, panelId, buttonId] = interaction.customId.split(":");
     const panel = await store.getPanel(guildId, panelId);
-    const button = panel?.buttons.find((item) => item.id === buttonId);
+    const button = panel ? panelButtons(panel).find((item) => item.id === buttonId) : undefined;
     if (!panel || !button) {
       await interaction.reply({ content: "Este botao nao esta mais disponivel.", flags: MessageFlags.Ephemeral });
       return;
@@ -612,7 +618,11 @@ export const panelSelectHandler: SelectMenuHandler = {
     const panelId = interaction.customId.slice(SELECT_CUSTOM_ID_PREFIX.length);
     const panel = await store.getPanel(guildId, panelId);
     const selectedId = interaction.values[0];
-    const option = panel?.select?.options.find((item) => item.id === selectedId);
+    const selectBlock = panel?.blocks.find((block) => block.type === "select");
+    const option =
+      selectBlock && selectBlock.type === "select"
+        ? selectBlock.options.find((item) => item.id === selectedId)
+        : undefined;
     if (!panel || !option) {
       await interaction.reply({ content: "Esta opcao nao esta mais disponivel.", flags: MessageFlags.Ephemeral });
       return;

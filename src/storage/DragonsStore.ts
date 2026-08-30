@@ -110,7 +110,7 @@ export interface DragonsStore {
   getMemberProfile(guildId: string, userId: string): Promise<MemberProfileResult>;
   getMemberRanking(guildId: string, limit: number): Promise<MemberRankingEntry[]>;
 
-  createPanel(guildId: string, id: string, title: string, description: string): Promise<PanelConfig>;
+  createPanel(guildId: string, id: string, title: string, description?: string): Promise<PanelConfig>;
   getPanel(guildId: string, id: string): Promise<PanelConfig | null>;
   listPanels(guildId: string): Promise<PanelConfig[]>;
   setPanelImage(guildId: string, id: string, imageUrl: string): Promise<PanelConfig>;

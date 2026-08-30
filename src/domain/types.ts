@@ -232,20 +232,9 @@ export interface BlacklistEntry {
 export type PanelButtonStyle = "Primary" | "Secondary" | "Success" | "Danger";
 
 /**
- * Tipo do painel: `buttons` (linhas de botoes, o formato historico) ou
- * `select` (um unico dropdown no lugar dos botoes). Documentos antigos nao
- * tem o campo — o mapeamento da store trata ausencia como `"buttons"`.
- */
-export type PanelKind = "buttons" | "select" | "text";
-
-/**
- * Formato da mensagem do painel:
- * - `embed`: um `EmbedBuilder` (formato historico) — imagem sempre embaixo,
- *   `title` nao renderiza emoji customizado do servidor.
- * - `container`: Components V2 (`ContainerBuilder`) — a imagem vira um
- *   banner no topo e o titulo/descricao viram texto markdown.
- *
- * Ausente no documento = `"embed"`.
+ * Formato de uma mensagem. Os PAINEIS nao usam mais isso (sao sempre
+ * Container / Components V2, via blocos), mas o fluxo de recrutamento
+ * (`RecruitmentMessageConfig`) ainda tem mensagens `embed`/`container`.
  */
 export type PanelLayout = "embed" | "container";
 
@@ -306,22 +295,107 @@ export interface PanelSelectConfig {
   options: PanelSelectOption[];
 }
 
+/* ------------------------------------------------------------------ *
+ * Blocos do painel (Components V2)
+ *
+ * ESPELHO de `dragons-platform/shared/src/panel.ts`. O painel e uma lista
+ * ordenada de blocos, renderizada sempre como um Container. Nao ha mais
+ * `layout: "embed"` nem `kind` no painel.
+ * ------------------------------------------------------------------ */
+
+export type PanelBlockType = "text" | "image" | "separator" | "buttons" | "select";
+export type PanelSeparatorSpacing = "small" | "large";
+
+export interface PanelTextBlock {
+  type: "text";
+  /** Markdown do Discord — vai cru para um TextDisplay. */
+  content: string;
+}
+export interface PanelImageBlock {
+  type: "image";
+  /** URL http(s) — vira um MediaGallery (banner). */
+  url: string;
+}
+export interface PanelSeparatorBlock {
+  type: "separator";
+  divider: boolean;
+  spacing: PanelSeparatorSpacing;
+}
+export interface PanelButtonsBlock {
+  type: "buttons";
+  /** 1..25 botoes; o render quebra em linhas de 5. */
+  buttons: PanelButtonConfig[];
+}
+export interface PanelSelectBlock {
+  type: "select";
+  placeholder: string;
+  options: PanelSelectOption[];
+}
+export type PanelBlock =
+  | PanelTextBlock
+  | PanelImageBlock
+  | PanelSeparatorBlock
+  | PanelButtonsBlock
+  | PanelSelectBlock;
+
 export interface PanelConfig {
   id: string;
   guildId: string;
-  title: string;
-  description: string;
-  imageUrl: string | null;
+  /** Cor de acento do Container (hex `#RRGGBB`) ou `null`. */
   color: string | null;
-  kind: PanelKind;
-  layout: PanelLayout;
-  buttons: PanelButtonConfig[];
-  /** Preenchido apenas quando `kind === "select"`; `null` caso contrario. */
-  select: PanelSelectConfig | null;
+  blocks: PanelBlock[];
   createdAt: string;
   updatedAt: string;
   publishedChannelId?: string | null;
   publishedMessageId?: string | null;
+
+  /**
+   * Campos LEGADOS do formato antigo. So a migracao de leitura (`mapPanel`)
+   * os usa para montar `blocks` quando o documento ainda nao tem o campo.
+   */
+  title?: string;
+  description?: string;
+  imageUrl?: string | null;
+  kind?: "buttons" | "select" | "text";
+  layout?: "embed" | "container";
+  buttons?: PanelButtonConfig[];
+  select?: PanelSelectConfig | null;
+}
+
+/**
+ * Migracao de leitura: monta `PanelBlock[]` a partir dos campos legados.
+ * ESPELHO de `dragons-platform/shared/src/panel-migrate.ts` — precisa
+ * produzir exatamente a mesma lista.
+ */
+export function panelBlocksFromLegacy(raw: {
+  title?: string;
+  description?: string;
+  imageUrl?: string | null;
+  kind?: string;
+  buttons?: PanelButtonConfig[];
+  select?: PanelSelectConfig | null;
+}): PanelBlock[] {
+  const blocks: PanelBlock[] = [];
+  if (raw.imageUrl) {
+    blocks.push({ type: "image", url: raw.imageUrl });
+  }
+  const title = (raw.title ?? "").trim();
+  const description = raw.description ?? "";
+  const parts: string[] = [];
+  if (title) parts.push(`## ${title}`);
+  if (description.trim()) parts.push(description);
+  if (parts.length > 0) {
+    blocks.push({ type: "text", content: parts.join("\n\n") });
+  }
+  if (raw.kind === "select" && raw.select && (raw.select.options?.length ?? 0) > 0) {
+    blocks.push({ type: "select", placeholder: raw.select.placeholder, options: raw.select.options });
+  } else if (raw.buttons && raw.buttons.length > 0) {
+    blocks.push({ type: "buttons", buttons: raw.buttons });
+  }
+  if (blocks.length === 0) {
+    blocks.push({ type: "text", content: `## ${title || "Painel"}` });
+  }
+  return blocks;
 }
 
 export type SupportCategoryCloseAction = "archive-remove";
