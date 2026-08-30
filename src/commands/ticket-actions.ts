@@ -32,17 +32,21 @@ export const ticketActionButtonHandler: ButtonHandler = {
 
     const member = interaction.member;
 
-    // Ticket de verificacao: sem categoria de suporte; quem pode fechar e o
-    // cargo `recruiter`, e o unico botao e "Fechar".
+    // Ticket de verificacao: sem categoria de suporte; quem Atende/Fecha e o
+    // cargo `recruiter`.
     if (ticket.kind === "verification") {
       const guildConfig = await store.getGuildConfig(guildId);
-      const canClose =
+      const isRecruiter =
         member instanceof GuildMember && memberHasAnyRole(member, [guildConfig.recruiterRoleId]);
-      if (!canClose) {
+      if (!isRecruiter) {
         await interaction.reply({
-          content: "Apenas a equipe de Recrutamento pode fechar este ticket.",
+          content: "Apenas a equipe de Recrutamento pode usar estes botoes.",
           flags: MessageFlags.Ephemeral
         });
+        return;
+      }
+      if (action === "claim") {
+        await handleClaim(interaction, store, ticket, null);
         return;
       }
       if (action === "close") {
