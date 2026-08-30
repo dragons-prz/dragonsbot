@@ -227,8 +227,9 @@ Fluxo (spec: `docs/specs/2026-08-30-verificacao-recrutamento-por-ticket.md`):
 A mensagem publica do wizard some no envio (o desfecho vai efemero so para o
 recrutador), entao a thread nao fica com um `/recrutar` "refazivel".
 
-O botao **Fechar ticket** da thread pode ser usado a qualquer momento pelo
-cargo `recruiter`. `/verificar` (Founder) continua como atalho de emergencia.
+A mensagem de abertura da thread leva os botoes **Atender ticket** e
+**Fechar ticket** (so o cargo `recruiter` usa) — mesmo par dos tickets de
+suporte. `/verificar` (Founder) continua como atalho de emergencia.
 Os pontos do recrutamento vao sempre para quem roda `/recrutar` (comportamento
 inalterado); a resposta do "Veio por alguem?" so define quem e mencionado na
 thread e o escalonamento.

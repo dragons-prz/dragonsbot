@@ -1,9 +1,6 @@
 import { randomUUID } from "node:crypto";
 
 import {
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
   ChannelType,
   Client,
   GuildMember,
@@ -18,7 +15,7 @@ import {
 import { logger } from "../../utils/logger";
 import { renderTemplate, slugify } from "../../utils/discord";
 import { DragonsStore } from "../../storage/DragonsStore";
-import { TICKET_ACTION_PREFIX } from "../ticket-shared";
+import { buildTicketActionRow } from "../ticket-shared";
 import { ModalHandler } from "../types";
 import { PanelActionContext } from "./types";
 
@@ -41,15 +38,6 @@ function todayStamp(): string {
   return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
 }
 
-/** Linha so com "Fechar ticket" — o ticket de verificacao nao tem "Atender". */
-function verificationCloseRow(ticketId: string): ActionRowBuilder<ButtonBuilder> {
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`${TICKET_ACTION_PREFIX}close:${ticketId}`)
-      .setLabel("Fechar ticket")
-      .setStyle(ButtonStyle.Danger)
-  );
-}
 
 /**
  * Acao `verification-ticket`: o botao "Verificar-se" de um painel. Abre um
@@ -248,7 +236,9 @@ export const verificationTicketFormHandler: ModalHandler = {
           ? { users: [declaredRecruiterUserId] }
           : { roles: [guildConfig.recruiterRoleId] }
       });
-      await pingMessage.edit({ components: [verificationCloseRow(ticketId)] });
+      await pingMessage.edit({
+        components: [buildTicketActionRow(ticketId, { claimDisabled: false })]
+      });
 
       const escalateAt = declaredRecruiterUserId
         ? new Date(Date.now() + ticketConfig.escalateAfterMinutes * 60_000).toISOString()
