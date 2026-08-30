@@ -7,24 +7,30 @@ import {
   ChannelType,
   Client,
   GuildMember,
+  LabelBuilder,
   MessageFlags,
-  StringSelectMenuBuilder
+  ModalBuilder,
+  StringSelectMenuBuilder,
+  TextInputBuilder,
+  TextInputStyle
 } from "discord.js";
 
 import { logger } from "../../utils/logger";
 import { renderTemplate, slugify } from "../../utils/discord";
 import { DragonsStore } from "../../storage/DragonsStore";
 import { TICKET_ACTION_PREFIX } from "../ticket-shared";
-import { SelectMenuHandler } from "../types";
+import { ModalHandler } from "../types";
 import { PanelActionContext } from "./types";
 
 const THREAD_NAME_MAX = 100;
-/** `verifyrec:pick:{guildId}` — o select "Veio por alguem?" do ticket. */
-export const VERIFICATION_PICK_PREFIX = "verifyrec:";
+/** `verifyrec:form:{guildId}` — o modal "Verificar-se". */
+export const VERIFICATION_FORM_PREFIX = "verifyrec:form:";
 const NONE_VALUE = "none";
 /** 25 e o limite de opcoes de um select do Discord; deixa 1 para o "Nenhum". */
 const MAX_RECRUITER_OPTIONS = 24;
 const ESCALATION_TICK_MS = 60_000;
+const AGE_FIELD = "age";
+const RECRUITER_FIELD = "recruiter";
 
 function newTicketId(): string {
   return randomUUID().replace(/-/g, "").slice(0, 20);
@@ -46,23 +52,35 @@ function verificationCloseRow(ticketId: string): ActionRowBuilder<ButtonBuilder>
 }
 
 /**
- * Acao `verification-ticket`: o botao "Verificar-se" de um painel. Em vez de
- * abrir a thread direto, responde (efemero) com o select "Veio por
- * alguem?" — a thread so nasce quando o membro escolhe uma opcao
- * (`verificationTicketPickHandler`), para nao vazar thread orfa se ele
- * fechar a mensagem.
+ * Acao `verification-ticket`: o botao "Verificar-se" de um painel. Abre um
+ * MODAL do Discord com dois campos — Idade (texto) e "Veio por alguem?"
+ * (dropdown com os membros do cargo `recruiter` + "Nenhum"). A thread do
+ * ticket so nasce quando o membro envia o formulario
+ * (`verificationTicketFormHandler`).
  */
 export async function openVerificationTicket({
   interaction,
   store,
   panelId
 }: PanelActionContext): Promise<void> {
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
   const guild = interaction.guild;
   const guildId = interaction.guildId;
+
+  // `showModal` precisa ser a resposta INICIAL — nao da para `deferReply`
+  // antes. So o botao (`ButtonInteraction`) abre modal.
+  if (!interaction.isButton()) {
+    await interaction.reply({
+      content: "Acao invalida.",
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
   if (!guild || !guildId) {
-    await interaction.editReply({ content: "Este painel so funciona dentro de um servidor." });
+    await interaction.reply({
+      content: "Este painel so funciona dentro de um servidor.",
+      flags: MessageFlags.Ephemeral
+    });
     return;
   }
 
@@ -74,30 +92,16 @@ export async function openVerificationTicket({
       panelId,
       reason: "parent_channel_not_configured"
     });
-    await interaction.editReply({
-      content: "A verificacao ainda nao foi configurada. Avise a administracao."
-    });
-    return;
-  }
-
-  const parent = await guild.channels.fetch(ticketConfig.parentChannelId).catch(() => null);
-  if (!parent || parent.type !== ChannelType.GuildText) {
-    logger.warn("verification_ticket.open_denied", {
-      guildId,
-      panelId,
-      reason: "parent_channel_invalid",
-      parentChannelId: ticketConfig.parentChannelId
-    });
-    await interaction.editReply({
-      content: "Nao foi possivel abrir a verificacao agora. Avise a administracao."
+    await interaction.reply({
+      content: "A verificacao ainda nao foi configurada. Avise a administracao.",
+      flags: MessageFlags.Ephemeral
     });
     return;
   }
 
   const guildConfig = await store.getGuildConfig(guildId);
   // Popula o cache de membros para `role.members` nao vir vazio logo apos o
-  // start do bot. O servidor tem poucas centenas de membros e no maximo ~20
-  // recrutadores (regra de produto), entao o custo e baixo.
+  // start do bot. Poucas centenas de membros, no maximo ~20 recrutadores.
   await guild.members.fetch().catch(() => undefined);
   const recruiterRole = await guild.roles.fetch(guildConfig.recruiterRoleId).catch(() => null);
   const recruiters = recruiterRole
@@ -112,9 +116,19 @@ export async function openVerificationTicket({
     });
   }
 
-  const select = new StringSelectMenuBuilder()
-    .setCustomId(`${VERIFICATION_PICK_PREFIX}pick:${guildId}`)
-    .setPlaceholder(ticketConfig.recruiterPickerPlaceholder)
+  const ageInput = new TextInputBuilder()
+    .setCustomId(AGE_FIELD)
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMinLength(1)
+    .setMaxLength(3)
+    .setPlaceholder(ticketConfig.agePlaceholder.slice(0, 100));
+
+  const recruiterSelect = new StringSelectMenuBuilder()
+    .setCustomId(RECRUITER_FIELD)
+    .setPlaceholder(ticketConfig.recruiterPickerPlaceholder.slice(0, 150))
+    .setMinValues(1)
+    .setMaxValues(1)
     .addOptions(
       ...recruiters.slice(0, MAX_RECRUITER_OPTIONS).map((member) => ({
         label: member.displayName.slice(0, 100),
@@ -123,20 +137,29 @@ export async function openVerificationTicket({
       { label: ticketConfig.noRecruiterLabel.slice(0, 100), value: NONE_VALUE }
     );
 
-  await interaction.editReply({
-    content: "Selecione quem te recrutou (ou **Nenhum**) para abrir a verificacao:",
-    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)]
-  });
+  const modal = new ModalBuilder()
+    .setCustomId(`${VERIFICATION_FORM_PREFIX}${guildId}`)
+    .setTitle(ticketConfig.formTitle.slice(0, 45))
+    .addLabelComponents(
+      new LabelBuilder()
+        .setLabel(ticketConfig.ageLabel.slice(0, 45))
+        .setTextInputComponent(ageInput),
+      new LabelBuilder()
+        .setLabel(ticketConfig.recruiterPickerLabel.slice(0, 45))
+        .setStringSelectMenuComponent(recruiterSelect)
+    );
+
+  await interaction.showModal(modal);
 }
 
 /**
- * Resposta do select "Veio por alguem?": cria a thread privada do ticket de
- * verificacao. Recrutador escolhido -> a thread menciona so ele e escala
- * para o cargo inteiro depois de `escalateAfterMinutes`. "Nenhum" -> a
- * thread ja menciona o cargo `recruiter` e nao escala.
+ * Envio do modal "Verificar-se": cria a thread privada do ticket. Recrutador
+ * escolhido -> a thread menciona so ele e escala para o cargo inteiro
+ * depois de `escalateAfterMinutes`. "Nenhum" -> a thread ja menciona o
+ * cargo `recruiter` e nao escala.
  */
-export const verificationTicketPickHandler: SelectMenuHandler = {
-  customIdPrefix: VERIFICATION_PICK_PREFIX,
+export const verificationTicketFormHandler: ModalHandler = {
+  customIdPrefix: VERIFICATION_FORM_PREFIX,
 
   async execute(interaction, { store }) {
     const guild = interaction.guild;
@@ -149,12 +172,11 @@ export const verificationTicketPickHandler: SelectMenuHandler = {
       return;
     }
 
-    // Colapsa o select (a mensagem efemera do `openVerificationTicket`) e
-    // passa a responder por esse mesmo update.
-    await interaction.update({ content: "Abrindo a verificacao...", components: [] });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    const choice = interaction.values[0];
-    const declaredRecruiterUserId = !choice || choice === NONE_VALUE ? null : choice;
+    const age = interaction.fields.getTextInputValue(AGE_FIELD).trim();
+    const recruiterChoice = interaction.fields.getStringSelectValues(RECRUITER_FIELD)[0] ?? NONE_VALUE;
+    const declaredRecruiterUserId = recruiterChoice === NONE_VALUE ? null : recruiterChoice;
 
     const slotClaimed = await store.claimTicketSlot(guildId, interaction.user.id);
     if (!slotClaimed) {
@@ -211,11 +233,17 @@ export const verificationTicketPickHandler: SelectMenuHandler = {
         user: `<@${interaction.user.id}>`,
         recruiter: declaredRecruiterUserId ? `<@${declaredRecruiterUserId}>` : "-"
       });
+      const answers = [
+        `**${ticketConfig.ageLabel}:** ${age || "-"}`,
+        `**${ticketConfig.recruiterPickerLabel}** ${
+          declaredRecruiterUserId ? `<@${declaredRecruiterUserId}>` : ticketConfig.noRecruiterLabel
+        }`
+      ].join("\n");
       const mention = declaredRecruiterUserId
         ? `<@${declaredRecruiterUserId}>`
         : `<@&${guildConfig.recruiterRoleId}>`;
       const pingMessage = await thread.send({
-        content: `${mention}\n${body}`,
+        content: `${mention}\n${body}\n\n${answers}`,
         allowedMentions: declaredRecruiterUserId
           ? { users: [declaredRecruiterUserId] }
           : { roles: [guildConfig.recruiterRoleId] }

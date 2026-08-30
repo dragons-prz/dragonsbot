@@ -1,6 +1,7 @@
 import {
   ButtonInteraction,
   ChatInputCommandInteraction,
+  ModalSubmitInteraction,
   StringSelectMenuInteraction,
   SlashCommandBuilder,
   SlashCommandOptionsOnlyBuilder,
@@ -25,4 +26,9 @@ export interface ButtonHandler {
 export interface SelectMenuHandler {
   customIdPrefix: string;
   execute(interaction: StringSelectMenuInteraction, context: CommandContext): Promise<void>;
+}
+
+export interface ModalHandler {
+  customIdPrefix: string;
+  execute(interaction: ModalSubmitInteraction, context: CommandContext): Promise<void>;
 }
