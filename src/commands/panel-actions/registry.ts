@@ -2,6 +2,7 @@ import { MessageFlags } from "discord.js";
 
 import { logger } from "../../utils/logger";
 import { openSupportTicket } from "./support-ticket";
+import { openVerificationTicket } from "./verification-ticket";
 import { PanelActionContext, PanelActionHandler } from "./types";
 
 /**
@@ -11,7 +12,8 @@ import { PanelActionContext, PanelActionHandler } from "./types";
  * generico e a logica especifica (ex.: ticket de suporte).
  */
 export const PANEL_ACTION_REGISTRY: Record<string, PanelActionHandler> = {
-  "support-ticket": openSupportTicket
+  "support-ticket": openSupportTicket,
+  "verification-ticket": openVerificationTicket
 };
 
 export async function runPanelAction(actionId: string, context: PanelActionContext): Promise<void> {

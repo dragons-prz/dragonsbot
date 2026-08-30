@@ -43,7 +43,8 @@ const WRITE_PREFIXES = [
   "reset", // resetStale*: query + batch write
   "expire", // expireStaleRecruitmentDrafts: query + batch write
   "close", // closeTicket: transacao (o metodo de ciclo de vida `close` e passthrough)
-  "release" // releaseTicketSlot: delete
+  "release", // releaseTicketSlot: delete
+  "link" // linkTicketRecruitment: update
 ];
 
 function kindOf(method: string): OpKind {

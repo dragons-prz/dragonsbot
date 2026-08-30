@@ -15,6 +15,7 @@ import {
   buildRecruitmentVars,
   buildSheetSnapshot,
   NONE_STARTER_ROLE_LABEL,
+  resolveRecruitmentRoute,
   selectedAreas,
   selectedRoleLabel
 } from "./wizard";
@@ -157,11 +158,14 @@ export async function postRecruitmentSheet(
   draft: RecruitmentDraft
 ): Promise<PostSheetResult> {
   const flowConfig = await store.getRecruitmentFlowConfig(draft.guildId);
-  if (!flowConfig.sheet.channelId) {
+
+  const { route, kind: routeKind } = resolveRecruitmentRoute(flowConfig, draft.areaIds);
+  if (!route.sheetChannelId) {
     logger.warn("recruitment_config.missing", {
       guildId: draft.guildId,
       draftId: draft.id,
-      reason: "sheet_channel_missing"
+      routeKind,
+      reason: "route_sheet_channel_missing"
     });
     return { ok: false, message: flowConfig.notConfiguredMessage };
   }
@@ -178,11 +182,17 @@ export async function postRecruitmentSheet(
     return { ok: false, message: "O cargo escolhido nao existe mais na configuracao." };
   }
 
-  const presentation = buildSheetSnapshot(flowConfig, {
+  const presentation = buildSheetSnapshot(flowConfig, route, routeKind, {
     guildId: draft.guildId,
     draftId: draft.id
   });
   const points = calculateRecruitmentPoints(areas, flowConfig.pointsMode);
+
+  // Se o `/recrutar` rodou dentro de um ticket de verificacao, o
+  // recrutamento fica vinculado a ele (e o ticket para de escalar).
+  const ticket = draft.channelId
+    ? await store.getVerificationTicketByThread(draft.guildId, draft.channelId)
+    : null;
 
   const recruitment = await store.createRecruitment({
     guildId: draft.guildId,
@@ -196,24 +206,38 @@ export async function postRecruitmentSheet(
     areaRoleIds: [...new Set(areas.flatMap((area) => area.roleIds))],
     areaLabels: areas.map((area) => area.label),
     points,
+    ticketId: ticket?.id ?? null,
+    ticketThreadId: ticket?.threadId ?? null,
     sheetPresentation: presentation
   });
 
-  const channel = await client.channels.fetch(flowConfig.sheet.channelId).catch(() => null);
+  if (ticket && ticket.recruitmentId === null) {
+    await store.linkTicketRecruitment(ticket.id, recruitment.id).catch((error) => {
+      logger.warn("verification_ticket.link_failed", {
+        guildId: draft.guildId,
+        ticketId: ticket.id,
+        recruitmentId: recruitment.id,
+        error: String(error)
+      });
+    });
+  }
+
+  const channel = await client.channels.fetch(route.sheetChannelId).catch(() => null);
   if (!channel?.isTextBased() || !("send" in channel)) {
     await store.deletePendingRecruitment(recruitment.id);
     logger.warn("recruitment.sheet_channel_not_found", {
       guildId: draft.guildId,
       draftId: draft.id,
       recruitmentId: recruitment.id,
-      channelId: flowConfig.sheet.channelId
+      routeKind,
+      channelId: route.sheetChannelId
     });
     return { ok: false, message: "Nao encontrei o canal das fichas configurado no painel." };
   }
 
   const mentionRoleIds =
-    presentation.mentionApprovers && flowConfig.approverRoleIds.length > 0
-      ? flowConfig.approverRoleIds
+    presentation.mentionApprovers && route.approverRoleIds.length > 0
+      ? route.approverRoleIds
       : [];
 
   // `createRecruitment` acima ja gravou o registro; se o envio falhar aqui
@@ -233,7 +257,8 @@ export async function postRecruitmentSheet(
       guildId: draft.guildId,
       draftId: draft.id,
       recruitmentId: recruitment.id,
-      channelId: flowConfig.sheet.channelId
+      routeKind,
+      channelId: route.sheetChannelId
     });
     return {
       ok: false,

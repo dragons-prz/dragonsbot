@@ -27,7 +27,6 @@ import {
 } from "../utils/discord";
 import { startJobWorker } from "../utils/jobWorker";
 import { logger } from "../utils/logger";
-import { syncMemberRankRoles } from "../utils/rankRoles";
 import { editSheetMessage } from "./recruitment/sheet";
 import { ButtonHandler, SlashCommand } from "./types";
 
@@ -239,42 +238,27 @@ async function editMemberEntryCard(
   await message.edit(buildMemberEntryCard(member, entry, options));
 }
 
+/**
+ * Na entrada de um membro so garantimos o registro (`MemberEntry`). O card
+ * automatico na fila de verificacao saiu: a porta unica agora e o painel
+ * "Verificar-se" -> ticket de verificacao. `/verificar` (Founder) continua
+ * como atalho de emergencia.
+ */
 export async function announceNewMember(member: GuildMember, store: Parameters<SlashCommand["execute"]>[1]["store"]) {
   if (member.user.bot) {
     return;
   }
 
   const joinedAt = member.joinedAt?.toISOString() ?? new Date().toISOString();
-  const entry = await store.createOrUpdateMemberEntry({
+  await store.createOrUpdateMemberEntry({
     guildId: member.guild.id,
     userId: member.id,
     joinedAt
   });
-
-  const config = await store.getGuildConfig(member.guild.id);
-  const channel = await member.guild.channels.fetch(config.memberVerificationChannelId).catch(() => null);
-  if (!channel?.isTextBased() || !("send" in channel)) {
-    logger.warn("member_entry.announcement_channel_not_found", {
-      guildId: member.guild.id,
-      userId: member.id,
-      userTag: member.user.tag,
-      channelId: config.memberVerificationChannelId
-    });
-    return;
-  }
-
-  const message = await channel.send({
-    content: `<@&${config.founderRoleId}> novo membro aguardando verificacao.`,
-    allowedMentions: { roles: [config.founderRoleId] },
-    ...buildMemberEntryCard(member, entry)
-  });
-  await store.setMemberEntryVerificationMessage(member.guild.id, member.id, message.channelId, message.id);
-  logger.info("member_entry.announced", {
+  logger.info("member_entry.registered", {
     guildId: member.guild.id,
     userId: member.id,
     userTag: member.user.tag,
-    channelId: message.channelId,
-    messageId: message.id,
     joinedAt
   });
 }
@@ -581,12 +565,6 @@ async function processApproveRecruitmentJob(client: Client, store: CommandStore,
 
   const config = await store.getGuildConfig(job.guildId);
   const flowConfig = await store.getRecruitmentFlowConfig(job.guildId);
-  // Quem aprova a ficha e definido no painel (`approverRoleIds`). O cargo de
-  // Founder segue mandando na verificacao de entrada, nao aqui.
-  if (!memberHasAnyRole(founder, flowConfig.approverRoleIds)) {
-    await store.cancelMemberActionJob(job.id, "Solicitante nao possui mais cargo de aprovacao.");
-    return;
-  }
 
   const recruitment = await store.getRecruitment(job.recruitmentId);
   if (!recruitment || recruitment.guildId !== job.guildId) {
@@ -596,6 +574,18 @@ async function processApproveRecruitmentJob(client: Client, store: CommandStore,
 
   if (recruitment.status !== "pending") {
     await store.cancelMemberActionJob(job.id, "Recrutamento ja foi aprovado.");
+    return;
+  }
+
+  // Quem confirma a ficha e definido no painel. As rotas novas
+  // (`familyRoute`/`areaRoute`) congelam os cargos no envio; recrutamento
+  // legado cai no `flowConfig.approverRoleIds` do topo.
+  const approverRoleIds =
+    recruitment.sheetPresentation && recruitment.sheetPresentation.routeApproverRoleIds.length > 0
+      ? recruitment.sheetPresentation.routeApproverRoleIds
+      : flowConfig.approverRoleIds;
+  if (!memberHasAnyRole(founder, approverRoleIds)) {
+    await store.cancelMemberActionJob(job.id, "Solicitante nao possui mais cargo de aprovacao.");
     return;
   }
 
@@ -652,17 +642,10 @@ async function processApproveRecruitmentJob(client: Client, store: CommandStore,
     recruitmentId: approved.id
   });
 
-  await syncMemberRankRoles(
-    guild,
-    approved.recruiterUserId,
-    {
-      member: promotedMember,
-      previousRankName: approval.previousRankName,
-      previousRankRoleId: approval.previousRankRoleId,
-      rankChanged: approval.rankChanged
-    },
-    { jobId: job.id, recruitmentId: approved.id }
-  );
+  // Sem up automatico: os pontos do recrutador continuam acumulando
+  // (`approveRecruitmentAndAddMemberPoints` acima), mas o cargo de rank NAO
+  // e mais aplicado/removido pelo bot — mudanca de cargo segue o sistema da
+  // administracao.
 
   let approvalMessages: { messageId: string }[] = [];
   let updatedMessages = 0;
@@ -757,7 +740,74 @@ async function processApproveRecruitmentJob(client: Client, store: CommandStore,
     });
   }
 
+  if (approved.ticketId) {
+    await finalizeVerificationTicket(client, store, approved, founder, flowConfig).catch((error) => {
+      logger.error("verification_ticket.finalize_failed", error, {
+        guildId: job.guildId,
+        recruitmentId: approved.id,
+        ticketId: approved.ticketId
+      });
+    });
+  }
+
   await store.completeMemberActionJob(job.id);
+}
+
+/**
+ * Encerra o ticket de verificacao quando a ficha e confirmada.
+ *
+ * A mensagem publica do wizard ja e apagada no envio (o desfecho vai
+ * ephemeral so para o recrutador), entao aqui so resta cuidar da thread:
+ *
+ * - Rota Familia: posta a mensagem de encerramento, tranca + arquiva a
+ *   thread e fecha o ticket (o processo nao pode ser refeito — ver tambem
+ *   o guard `blockedAlreadyInFamilyMessage` no `/recrutar`).
+ * - Rota Area: so arquiva a thread e fecha o ticket — a lideranca de REC
+ *   "da continuidade" no processo dela, sem aviso do bot.
+ */
+async function finalizeVerificationTicket(
+  client: Client,
+  store: CommandStore,
+  recruitment: Recruitment,
+  approver: GuildMember,
+  flowConfig: Awaited<ReturnType<CommandStore["getRecruitmentFlowConfig"]>>
+): Promise<void> {
+  if (!recruitment.ticketId) {
+    return;
+  }
+  const ticket = await store.getTicket(recruitment.ticketId);
+  if (!ticket || ticket.status === "closed") {
+    return;
+  }
+  const isFamily = recruitment.sheetPresentation?.routeKind === "family";
+  const thread = ticket.threadId
+    ? await client.channels.fetch(ticket.threadId).catch(() => null)
+    : null;
+
+  if (thread?.isThread()) {
+    if (isFamily) {
+      const body = flowConfig.verificationTicket.closeMessage
+        .replace(/\{user\}/g, `<@${ticket.openerUserId}>`)
+        .replace(/\{closer\}/g, `<@${approver.id}>`);
+      await thread.send(body).catch(() => undefined);
+      await thread.setLocked(true).catch(() => undefined);
+    }
+    await thread.setArchived(true).catch(() => undefined);
+  }
+
+  await store.releaseTicketSlot(ticket.guildId, ticket.openerUserId).catch(() => undefined);
+  await store.closeTicket(ticket.id, approver.id).catch(() => undefined);
+
+  logger.info(
+    isFamily ? "verification_ticket.recruited_family" : "verification_ticket.recruited_area",
+    {
+      guildId: ticket.guildId,
+      ticketId: ticket.id,
+      threadId: ticket.threadId,
+      recruitmentId: recruitment.id,
+      approverUserId: approver.id
+    }
+  );
 }
 
 async function processMemberActionJob(client: Client, store: CommandStore, job: MemberActionJob) {

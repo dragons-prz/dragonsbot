@@ -104,6 +104,13 @@ export interface Recruitment {
   areaLabels: string[];
   /** Pontos calculados no envio; `0` cai no fallback `GuildConfig.recruitmentPoints`. */
   points: number;
+  /**
+   * Ticket de verificacao onde o `/recrutar` rodou, quando aplicavel.
+   * `null` quando o comando rodou fora de um ticket (ex.: recrutar quem ja
+   * e membro para uma area nova).
+   */
+  ticketId: string | null;
+  ticketThreadId: string | null;
   sheetChannelId: string | null;
   sheetMessageId: string | null;
   /** Formato da ficha, congelado no envio. `null` nos recrutamentos legados. */
@@ -190,6 +197,8 @@ export interface CreateRecruitmentInput {
   areaRoleIds?: string[];
   areaLabels?: string[];
   points?: number;
+  ticketId?: string | null;
+  ticketThreadId?: string | null;
   sheetPresentation?: RecruitmentSheetSnapshot | null;
 }
 
@@ -227,7 +236,7 @@ export type PanelButtonStyle = "Primary" | "Secondary" | "Success" | "Danger";
  * `select` (um unico dropdown no lugar dos botoes). Documentos antigos nao
  * tem o campo — o mapeamento da store trata ausencia como `"buttons"`.
  */
-export type PanelKind = "buttons" | "select";
+export type PanelKind = "buttons" | "select" | "text";
 
 /**
  * Formato da mensagem do painel:
@@ -264,7 +273,7 @@ export interface PanelRunAction {
 export type PanelActionConfig = PanelReplyAction | PanelRunAction;
 
 /** Ids de acao `run` reconhecidos pelo bot — espelho do `PANEL_ACTIONS` da dragons-platform. */
-export const PANEL_ACTION_IDS = ["support-ticket"] as const;
+export const PANEL_ACTION_IDS = ["support-ticket", "verification-ticket"] as const;
 export type PanelActionId = (typeof PANEL_ACTION_IDS)[number];
 
 export interface PanelButtonConfig {
@@ -342,19 +351,43 @@ export interface SupportCategoryConfig {
 export type TicketStatus = "open" | "claimed" | "closed";
 
 /**
- * Registro de um ticket de suporte aberto. Escrito SO pelo bot (colecao
+ * Tipo do ticket:
+ * - `support`: aberto por uma acao de painel `support-ticket` (fluxo de
+ *   atendimento com Atender/Fechar);
+ * - `verification`: aberto pelo botao "Verificar-se" (`verification-ticket`)
+ *   — a thread onde o recrutador roda o `/recrutar`.
+ *
+ * Ausente no doc = `"support"`.
+ */
+export type TicketKind = "support" | "verification";
+
+/**
+ * Registro de um ticket aberto. Escrito SO pelo bot (colecao
  * `tickets/{ticketId}`); a dragons-platform le para o dashboard (fase 3).
  */
 export interface TicketRecord {
   id: string;
   guildId: string;
   panelId: string;
+  /** So tickets de suporte referenciam uma categoria; `""` nos de verificacao. */
   categoryId: string;
   openerUserId: string;
   parentChannelId: string;
   threadId: string;
   pingMessageId: string;
   status: TicketStatus;
+  kind: TicketKind;
+  /** So verification: recrutador que o membro declarou no formulario. */
+  declaredRecruiterUserId: string | null;
+  /**
+   * So verification: quando marcar todo o cargo `recruiter` na thread.
+   * `null` apos escalar, ou quando ja nasceu sem recrutador declarado, ou
+   * quando um `/recrutar` ja vinculou um recrutamento a este ticket.
+   */
+  escalateAt: string | null;
+  escalatedAt: string | null;
+  /** So verification: recrutamento aberto dentro desta thread, quando houver. */
+  recruitmentId: number | null;
   claimedByUserId: string | null;
   claimedAt: string | null;
   closedByUserId: string | null;
@@ -371,11 +404,14 @@ export interface CreateTicketInput {
   id?: string;
   guildId: string;
   panelId: string;
-  categoryId: string;
+  categoryId?: string;
   openerUserId: string;
   parentChannelId: string;
   threadId: string;
   pingMessageId: string;
+  kind?: TicketKind;
+  declaredRecruiterUserId?: string | null;
+  escalateAt?: string | null;
 }
 
 export type PanelJobStatus = "pending" | "processing" | "completed" | "failed";
@@ -497,6 +533,42 @@ export interface RecruitmentSheetConfig {
 
 export type RecruitmentPointsMode = "sum" | "highest";
 
+/**
+ * Ticket de verificacao — a thread privada aberta pelo botao "Verificar-se"
+ * de um painel (`actionId: "verification-ticket"`). ESPELHO de
+ * `dragons-platform/shared/src/recruitment-config.ts`.
+ */
+export interface RecruitmentVerificationTicketConfig {
+  /** Canal de texto onde nasce a thread privada. `null` = ticket nao configurado. */
+  parentChannelId: string | null;
+  /** Nome da thread. Vars: `{user}` `{date}` `{shortid}`. */
+  threadNameTemplate: string;
+  /** Primeiro post da thread. Vars: `{user}` `{recruiter}`. */
+  openMessage: string;
+  /** Post de escalonamento (menciona o cargo `recruiter`). Vars: `{user}`. */
+  escalationMessage: string;
+  /** Post ao fechar/arquivar a thread. Vars: `{user}` `{closer}`. */
+  closeMessage: string;
+  /** Minutos sem recrutamento ate marcar todo o cargo `recruiter`. */
+  escalateAfterMinutes: number;
+  /** Placeholder do select "Veio por alguem?". */
+  recruiterPickerPlaceholder: string;
+  /** Label da opcao "entrei por conta propria". */
+  noRecruiterLabel: string;
+}
+
+/**
+ * Destino da ficha. A rota e escolhida pela area marcada na etapa 2: se a
+ * area `familyAreaId` estiver entre as escolhidas -> `familyRoute` (Founders
+ * / "Verificacao das Posses"); senao -> `areaRoute` (lideranca de REC).
+ */
+export interface RecruitmentRouteConfig {
+  /** Canal onde a ficha dessa rota e postada. `null` = rota nao configurada. */
+  sheetChannelId: string | null;
+  /** Cargos que podem Confirmar/Rejeitar a ficha dessa rota. */
+  approverRoleIds: string[];
+}
+
 export interface RecruitmentFlowConfig {
   guildId: string;
   starterRoles: RecruitmentStarterRoleOption[];
@@ -508,8 +580,18 @@ export interface RecruitmentFlowConfig {
   stepThree: RecruitmentStepThreeConfig;
   outcome: RecruitmentOutcomeConfig;
   sheet: RecruitmentSheetConfig;
+  verificationTicket: RecruitmentVerificationTicketConfig;
+  /** Qual `RecruitmentAreaOption.id` conta como "recrutamento para a Familia". */
+  familyAreaId: string | null;
+  /** Rota Familia: ficha vai para os Founders ("Verificacao das Posses"). */
+  familyRoute: RecruitmentRouteConfig;
+  /** Rota Area: ficha vai para a lideranca de REC. */
+  areaRoute: RecruitmentRouteConfig;
+  /** Fallback dos recrutamentos legados — as rotas novas usam `familyRoute`/`areaRoute`. */
   approverRoleIds: string[];
   pointsGrantRoleIds: string[];
+  /** Cargos que podem usar `/pontos-resetar`. Vazio = cai em `pointsGrantRoleIds`. */
+  pointsResetRoleIds: string[];
   pointsMode: RecruitmentPointsMode;
   minManualPoints: number;
   maxManualPoints: number;
@@ -520,6 +602,8 @@ export interface RecruitmentFlowConfig {
   notApproverMessage: string;
   notDraftOwnerMessage: string;
   notConfiguredMessage: string;
+  /** Bloqueio do `/recrutar` quando o membro ja tem recrutamento Familia aprovado. */
+  blockedAlreadyInFamilyMessage: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -567,7 +651,7 @@ export const DEFAULT_RECRUITMENT_FLOW_CONFIG: Omit<
   starterRoles: [],
   areas: [],
   minAreas: 1,
-  maxAreas: 2,
+  maxAreas: 1,
   stepOne: {
     message: recruitmentMessage(
       "Recrutamento - etapa {step}/{total}",
@@ -636,8 +720,23 @@ export const DEFAULT_RECRUITMENT_FLOW_CONFIG: Omit<
     avatarPlacement: "thumbnail",
     mentionApprovers: true
   },
+  verificationTicket: {
+    parentChannelId: null,
+    threadNameTemplate: "verificacao-{user}-{shortid}",
+    openMessage: "Ola {user}! Um recrutador vai te atender por aqui.",
+    escalationMessage:
+      "{user} esta aguardando ha mais de 1h — alguem pode dar continuidade?",
+    closeMessage: "Ticket de {user} encerrado por {closer}.",
+    escalateAfterMinutes: 60,
+    recruiterPickerPlaceholder: "Veio por alguem?",
+    noRecruiterLabel: "Nenhum — entrei por conta propria"
+  },
+  familyAreaId: null,
+  familyRoute: { sheetChannelId: null, approverRoleIds: [] },
+  areaRoute: { sheetChannelId: null, approverRoleIds: [] },
   approverRoleIds: [],
   pointsGrantRoleIds: [],
+  pointsResetRoleIds: [],
   pointsMode: "sum",
   minManualPoints: -100,
   maxManualPoints: 100,
@@ -648,7 +747,9 @@ export const DEFAULT_RECRUITMENT_FLOW_CONFIG: Omit<
   notApproverMessage: "Voce nao tem permissao para essa acao.",
   notDraftOwnerMessage: "Apenas quem iniciou este recrutamento pode usar estes botoes.",
   notConfiguredMessage:
-    "O fluxo de recrutamento ainda nao foi configurado no painel (cargos de iniciante, areas e canal da ficha)."
+    "O fluxo de recrutamento ainda nao foi configurado no painel (cargos de iniciante, areas e canal da ficha).",
+  blockedAlreadyInFamilyMessage:
+    "Este membro ja entrou na familia e nao pode ser recrutado de novo para ela."
 };
 
 /** Soma (default) ou maior valor dos pontos das areas escolhidas. */
@@ -691,8 +792,22 @@ export interface RecruitmentPresentationSnapshot {
   notDraftOwnerMessage: string;
 }
 
-/** Idem para a ficha, congelado no envio; vive no `Recruitment`. */
-export type RecruitmentSheetSnapshot = RecruitmentSheetConfig;
+export type RecruitmentRouteKind = "family" | "area";
+
+/**
+ * Idem para a ficha, congelado no envio; vive no `Recruitment`.
+ *
+ * `channelId` recebe o canal JA RESOLVIDO da rota (`familyRoute` ou
+ * `areaRoute`) no momento do envio; `routeKind` e `routeApproverRoleIds`
+ * congelam qual rota e quem confirma, para editar a config no painel nao
+ * mudar uma ficha ja postada. Recrutamentos legados tem
+ * `routeKind: "area"` e `routeApproverRoleIds: []` (o job cai no
+ * `flowConfig.approverRoleIds` do topo como fallback).
+ */
+export type RecruitmentSheetSnapshot = RecruitmentSheetConfig & {
+  routeKind: RecruitmentRouteKind;
+  routeApproverRoleIds: string[];
+};
 
 export type RecruitmentDraftStatus =
   | "selecting_role"

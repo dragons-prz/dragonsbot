@@ -30,8 +30,30 @@ export const ticketActionButtonHandler: ButtonHandler = {
       return;
     }
 
-    const category = await store.getSupportCategory(guildId, ticket.categoryId);
     const member = interaction.member;
+
+    // Ticket de verificacao: sem categoria de suporte; quem pode fechar e o
+    // cargo `recruiter`, e o unico botao e "Fechar".
+    if (ticket.kind === "verification") {
+      const guildConfig = await store.getGuildConfig(guildId);
+      const canClose =
+        member instanceof GuildMember && memberHasAnyRole(member, [guildConfig.recruiterRoleId]);
+      if (!canClose) {
+        await interaction.reply({
+          content: "Apenas a equipe de Recrutamento pode fechar este ticket.",
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+      if (action === "close") {
+        await handleClose(interaction, store, ticket, null);
+        return;
+      }
+      await interaction.reply({ content: "Acao de ticket nao reconhecida.", flags: MessageFlags.Ephemeral });
+      return;
+    }
+
+    const category = await store.getSupportCategory(guildId, ticket.categoryId);
     const isSupport =
       member instanceof GuildMember && !!category && memberHasAnyRole(member, category.supportRoleIds);
     if (!isSupport) {
@@ -146,9 +168,16 @@ async function handleClose(
 
   await store.releaseTicketSlot(ticket.guildId, ticket.openerUserId).catch(() => undefined);
 
+  // Ticket de verificacao usa o template de `verificationTicket.closeMessage`.
+  let closeTemplate = category?.closeMessage || "Ticket fechado por {closer}.";
+  if (!category && ticket.kind === "verification") {
+    const flowConfig = await store.getRecruitmentFlowConfig(ticket.guildId);
+    closeTemplate = flowConfig.verificationTicket.closeMessage;
+  }
+
   const thread = await fetchThread(interaction, ticket.threadId);
   if (thread) {
-    const body = renderTemplate(category?.closeMessage || "Ticket fechado por {closer}.", {
+    const body = renderTemplate(closeTemplate, {
       user: `<@${ticket.openerUserId}>`,
       closer: `<@${interaction.user.id}>`
     });
