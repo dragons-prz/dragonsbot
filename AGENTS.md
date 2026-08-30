@@ -97,11 +97,14 @@ Sempre rode `npm run build` antes de reportar uma mudança como concluída.
 - O fluxo de `/recrutar` é configurado **só** pela `dragons-platform`
   (`recruitmentConfigs/{guildId}`); não adicione subcomando de `/config` para
   isso. Os tipos `RecruitmentFlowConfig` e companhia em `src/domain/types.ts`
-  — incluindo `RecruitmentVerificationTicketConfig`, `RecruitmentRouteConfig` e
-  `PanelKind` (agora com `"text"`) — são espelho de
-  `dragons-platform/shared/src/recruitment-config.ts` / `panel.ts`: mudança de
+  — incluindo `RecruitmentVerificationTicketConfig` e `RecruitmentRouteConfig` —
+  são espelho de `dragons-platform/shared/src/recruitment-config.ts`: mudança de
   forma exige PR coordenado nos dois repositórios.
-- Entrada de membro: sem card automático — a porta é um painel `kind: "text"`
+- Painéis são uma lista de blocos (`PanelBlock[]`, Components V2 — sem
+  `layout`/`kind`). `PanelConfig`/`PanelBlock` em `src/domain/types.ts` e a
+  migração de leitura `panelBlocksFromLegacy` são espelho de
+  `dragons-platform/shared/src/panel.ts` / `panel-migrate.ts` — PR coordenado.
+- Entrada de membro: sem card automático — a porta é um painel só de texto
   com botão `verification-ticket`, que abre uma thread (`tickets` com
   `kind: "verification"`). A ficha do `/recrutar` é roteada por
   `familyAreaId` → `familyRoute`/`areaRoute` (canal + cargos que confirmam),

@@ -32,14 +32,15 @@ import {
   MemberProfileResult,
   MemberRankingEntry,
   PanelActionConfig,
+  PanelBlock,
   PanelButtonConfig,
   PanelButtonStyle,
   PanelConfig,
   PanelJob,
   PanelJobStatus,
-  PanelKind,
   PanelLayout,
   PanelSelectConfig,
+  panelBlocksFromLegacy,
   Recruitment,
   RecruitmentKind,
   RecruitmentApprovalMessage,
@@ -217,18 +218,21 @@ interface PanelSelectDocument {
 interface PanelDocument {
   id: string;
   guildId: string;
-  title: string;
-  description: string;
-  imageUrl: string | null;
   color: string | null;
-  kind?: PanelKind;
-  layout?: PanelLayout;
-  buttons: PanelButtonDocument[];
-  select?: PanelSelectDocument | null;
+  /** Formato novo: lista de blocos (Components V2). Ausente nos docs antigos. */
+  blocks?: PanelBlock[];
   createdAt: string;
   updatedAt: string;
   publishedChannelId?: string | null;
   publishedMessageId?: string | null;
+  /** Campos legados — so a migracao de leitura (`mapPanel`) os usa. */
+  title?: string;
+  description?: string;
+  imageUrl?: string | null;
+  kind?: string;
+  layout?: PanelLayout;
+  buttons?: PanelButtonDocument[];
+  select?: PanelSelectDocument | null;
 }
 
 interface SupportCategoryDocument {
@@ -1342,7 +1346,12 @@ export class FirestoreDragonsStore implements DragonsStore {
       .map((entry, index) => ({ ...entry, position: index + 1 }));
   }
 
-  async createPanel(guildId: string, id: string, title: string, description: string): Promise<PanelConfig> {
+  async createPanel(
+    guildId: string,
+    id: string,
+    title: string,
+    description?: string
+  ): Promise<PanelConfig> {
     const ref = this.panelRef(guildId, id);
     const snapshot = await ref.get();
     if (snapshot.exists) {
@@ -1350,22 +1359,36 @@ export class FirestoreDragonsStore implements DragonsStore {
     }
 
     const now = new Date().toISOString();
+    const content = description && description.trim() ? `## ${title}\n\n${description}` : `## ${title}`;
     const document: PanelDocument = {
       id,
       guildId,
-      title,
-      description,
-      imageUrl: null,
       color: null,
-      kind: "buttons",
-      layout: "embed",
-      buttons: [],
-      select: null,
+      blocks: [{ type: "text", content }],
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      publishedChannelId: null,
+      publishedMessageId: null
     };
     await ref.set(document);
     return this.mapPanel(document);
+  }
+
+  /** Le o painel (ja migrado para blocos) e grava a nova lista de blocos. */
+  private async updatePanelBlocks(
+    guildId: string,
+    id: string,
+    mutate: (blocks: PanelBlock[]) => PanelBlock[]
+  ): Promise<PanelConfig> {
+    const ref = this.panelRef(guildId, id);
+    const snapshot = await ref.get();
+    if (!snapshot.exists) {
+      throw new Error(`Painel "${id}" nao encontrado.`);
+    }
+    const current = this.mapPanel(snapshot.data() as PanelDocument);
+    const blocks = mutate([...current.blocks]);
+    await ref.update({ blocks, updatedAt: new Date().toISOString() });
+    return this.getPanel(guildId, id) as Promise<PanelConfig>;
   }
 
   async getPanel(guildId: string, id: string): Promise<PanelConfig | null> {
@@ -1381,14 +1404,16 @@ export class FirestoreDragonsStore implements DragonsStore {
   }
 
   async setPanelImage(guildId: string, id: string, imageUrl: string): Promise<PanelConfig> {
-    const ref = this.panelRef(guildId, id);
-    const snapshot = await ref.get();
-    if (!snapshot.exists) {
-      throw new Error(`Painel "${id}" nao encontrado.`);
-    }
-
-    await ref.update({ imageUrl, updatedAt: new Date().toISOString() });
-    return this.getPanel(guildId, id) as Promise<PanelConfig>;
+    // Upsert de um bloco de banner: atualiza o 1o bloco `image`, ou insere
+    // um no topo se nao houver.
+    return this.updatePanelBlocks(guildId, id, (blocks) => {
+      const first = blocks.findIndex((block) => block.type === "image");
+      if (first >= 0) {
+        blocks[first] = { type: "image", url: imageUrl };
+        return blocks;
+      }
+      return [{ type: "image", url: imageUrl }, ...blocks];
+    });
   }
 
   async setPanelColor(guildId: string, id: string, color: string | null): Promise<PanelConfig> {
@@ -1402,39 +1427,43 @@ export class FirestoreDragonsStore implements DragonsStore {
     return this.getPanel(guildId, id) as Promise<PanelConfig>;
   }
 
-  async addPanelButton(guildId: string, id: string, button: Omit<PanelButtonConfig, "order">): Promise<PanelConfig> {
-    const ref = this.panelRef(guildId, id);
-    const snapshot = await ref.get();
-    if (!snapshot.exists) {
-      throw new Error(`Painel "${id}" nao encontrado.`);
-    }
-
-    const data = snapshot.data() as PanelDocument;
-    if (data.buttons.some((existing) => existing.id === button.id)) {
-      throw new Error(`Ja existe um botao com o id "${button.id}" neste painel.`);
-    }
-    if (data.buttons.length >= 25) {
-      throw new Error("Este painel ja atingiu o limite de 25 botoes.");
-    }
-
-    const buttons = [...data.buttons, { ...button, order: data.buttons.length }];
-    await ref.update({ buttons, updatedAt: new Date().toISOString() });
-    return this.getPanel(guildId, id) as Promise<PanelConfig>;
+  async addPanelButton(
+    guildId: string,
+    id: string,
+    button: Omit<PanelButtonConfig, "order">
+  ): Promise<PanelConfig> {
+    return this.updatePanelBlocks(guildId, id, (blocks) => {
+      const all = blocks.flatMap((b) => (b.type === "buttons" ? b.buttons : []));
+      if (all.some((existing) => existing.id === button.id)) {
+        throw new Error(`Ja existe um botao com o id "${button.id}" neste painel.`);
+      }
+      if (all.length >= 25) {
+        throw new Error("Este painel ja atingiu o limite de 25 botoes.");
+      }
+      const withOrder: PanelButtonConfig = { ...button, order: 0 };
+      const lastButtons = [...blocks].reverse().find((b) => b.type === "buttons");
+      if (lastButtons && lastButtons.type === "buttons") {
+        lastButtons.buttons = [...lastButtons.buttons, withOrder].map((b, i) => ({ ...b, order: i }));
+        return blocks;
+      }
+      return [...blocks, { type: "buttons", buttons: [{ ...withOrder, order: 0 }] }];
+    });
   }
 
   async removePanelButton(guildId: string, id: string, buttonId: string): Promise<PanelConfig> {
-    const ref = this.panelRef(guildId, id);
-    const snapshot = await ref.get();
-    if (!snapshot.exists) {
-      throw new Error(`Painel "${id}" nao encontrado.`);
-    }
-
-    const data = snapshot.data() as PanelDocument;
-    const buttons = data.buttons
-      .filter((existing) => existing.id !== buttonId)
-      .map((existing, index) => ({ ...existing, order: index }));
-    await ref.update({ buttons, updatedAt: new Date().toISOString() });
-    return this.getPanel(guildId, id) as Promise<PanelConfig>;
+    return this.updatePanelBlocks(guildId, id, (blocks) =>
+      blocks
+        .map((block) => {
+          if (block.type !== "buttons") return block;
+          return {
+            type: "buttons" as const,
+            buttons: block.buttons
+              .filter((b) => b.id !== buttonId)
+              .map((b, i) => ({ ...b, order: i }))
+          };
+        })
+        .filter((block) => block.type !== "buttons" || block.buttons.length > 0)
+    );
   }
 
   async deletePanel(guildId: string, id: string): Promise<void> {
@@ -1620,24 +1649,50 @@ export class FirestoreDragonsStore implements DragonsStore {
   }
 
   private mapPanel(data: PanelDocument): PanelConfig {
+    const rawBlocks: PanelBlock[] =
+      Array.isArray(data.blocks) && data.blocks.length > 0
+        ? data.blocks
+        : panelBlocksFromLegacy({
+            title: data.title,
+            description: data.description,
+            imageUrl: data.imageUrl ?? null,
+            kind: data.kind,
+            buttons: data.buttons ? data.buttons.map((b) => this.mapPanelButton(b)) : undefined,
+            select: this.mapPanelSelect(data.select)
+          });
     return {
       id: data.id,
       guildId: data.guildId,
-      title: data.title,
-      description: data.description,
-      imageUrl: data.imageUrl ?? null,
       color: data.color ?? null,
-      kind: data.kind ?? "buttons",
-      layout: data.layout ?? "embed",
-      buttons: [...data.buttons]
-        .sort((a, b) => a.order - b.order)
-        .map((button) => this.mapPanelButton(button)),
-      select: this.mapPanelSelect(data.select),
+      blocks: rawBlocks.map((block) => this.normalizePanelBlock(block)),
       createdAt: data.createdAt,
       updatedAt: data.updatedAt,
       publishedChannelId: data.publishedChannelId ?? null,
       publishedMessageId: data.publishedMessageId ?? null
     };
+  }
+
+  private normalizePanelBlock(block: PanelBlock): PanelBlock {
+    if (block.type === "buttons") {
+      return {
+        type: "buttons",
+        buttons: [...block.buttons]
+          .sort((a, b) => a.order - b.order)
+          .map((button) => this.mapPanelButton(button as PanelButtonDocument))
+      };
+    }
+    if (block.type === "select") {
+      const mapped = this.mapPanelSelect({
+        placeholder: block.placeholder,
+        options: block.options as unknown as PanelSelectDocument["options"]
+      });
+      return {
+        type: "select",
+        placeholder: mapped?.placeholder ?? block.placeholder,
+        options: mapped?.options ?? []
+      };
+    }
+    return block;
   }
 
   /**
