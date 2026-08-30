@@ -205,11 +205,12 @@ um botao com a acao `verification-ticket`).
 
 Fluxo (spec: `docs/specs/2026-08-30-verificacao-recrutamento-por-ticket.md`):
 
-1. O membro clica em **Verificar-se** -> o bot responde (so para ele) com o
-   select **"Veio por alguem?"**: a lista dos membros com o cargo `recruiter`
-   (montada ao vivo) + a opcao **Nenhum**.
-2. Ao escolher, nasce uma **thread privada** (ticket `kind: "verification"`)
-   no canal configurado em `verificationTicket.parentChannelId`:
+1. O membro clica em **Verificar-se** -> abre um **modal** (`verifyrec:form:`)
+   com 2 campos: **Idade** (texto) e **"Veio por alguem?"** (dropdown com a
+   lista dos membros do cargo `recruiter`, montada ao vivo, + **Nenhum**).
+2. Ao enviar o modal, nasce uma **thread privada** (ticket
+   `kind: "verification"`) no canal `verificationTicket.parentChannelId`, com
+   as respostas do formulario postadas logo abaixo da mensagem de abertura:
    - **recrutador escolhido** -> a thread menciona so ele; se em
      `verificationTicket.escalateAfterMinutes` (default 60) o membro nao foi
      recrutado, um worker marca o cargo `recruiter` inteiro na thread;
@@ -321,13 +322,16 @@ Os paineis ficam na colecao `panels` do Firestore, compartilhada com a `dragons-
 ### Verificacao (acao `verification-ticket`)
 
 Um botao com `action: { type: "run", actionId: "verification-ticket" }` (sem
-`params`) e o "Verificar-se". Ao clicar, o bot responde (efemero) com o select
-**"Veio por alguem?"** e, na escolha, cria a thread privada do ticket de
-verificacao. Toda a config vem de `recruitmentConfigs/{guildId}.verificationTicket`
-(escrita so pela `dragons-platform`): `parentChannelId`, `threadNameTemplate`
-(`{user}` `{date}` `{shortid}`), `openMessage` (`{user}` `{recruiter}`),
-`escalationMessage` (`{user}`), `closeMessage` (`{user}` `{closer}`),
-`escalateAfterMinutes`, `recruiterPickerPlaceholder`, `noRecruiterLabel`. Ver a
+`params`) e o "Verificar-se". Ao clicar, o bot abre um **modal** com dois
+campos — **Idade** (texto) e **"Veio por alguem?"** (dropdown com os membros
+do cargo `recruiter` + "Nenhum") — e, ao enviar, cria a thread privada do
+ticket de verificacao. Toda a config vem de
+`recruitmentConfigs/{guildId}.verificationTicket` (escrita so pela
+`dragons-platform`): `parentChannelId`, `formTitle`, `ageLabel`,
+`agePlaceholder`, `recruiterPickerLabel`, `recruiterPickerPlaceholder`,
+`noRecruiterLabel`, `threadNameTemplate` (`{user}` `{date}` `{shortid}`),
+`openMessage` (`{user}` `{recruiter}`), `escalationMessage` (`{user}`),
+`closeMessage` (`{user}` `{closer}`), `escalateAfterMinutes`. Ver a
 secao "Entrada e verificacao por ticket" acima e
 `docs/specs/2026-08-30-verificacao-recrutamento-por-ticket.md`.
 
@@ -574,6 +578,7 @@ Eventos principais:
 - `verification_ticket.link_failed`
 - `member_entry.registered` (entrada de membro — sem mais card automatico)
 - `interaction.select.received` / `interaction.select.completed`
+- `interaction.modal.received` / `interaction.modal.completed` / `interaction.modal.unknown`
 - `member_action_job.failed`
 - `member_action_job.restore_ui_failed`
 - `member_action_job.stale_reset`

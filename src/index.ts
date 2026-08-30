@@ -11,7 +11,7 @@ import {
   MessageFlags
 } from "discord.js";
 import { loadEnv } from "./config/env";
-import { buttonHandlers, commands, selectMenuHandlers } from "./commands";
+import { buttonHandlers, commands, modalHandlers, selectMenuHandlers } from "./commands";
 import { announceMemberExit, announceNewMember, startMemberActionJobWorker } from "./commands/recrutar";
 import { startPanelJobWorker } from "./commands/painel";
 import { startVerificationTicketEscalationWorker } from "./commands/panel-actions/verification-ticket";
@@ -173,6 +173,43 @@ async function main(): Promise<void> {
         await newrelic.startBackgroundTransaction(txName, "select", async () => {
           await handler.execute(interaction, { store });
           logger.info("interaction.select.completed", {
+            customId: interaction.customId,
+            interactionId: interaction.id,
+            guildId: interaction.guildId,
+            userId: interaction.user.id,
+            durationMs: Date.now() - startedAt
+          });
+        });
+        return;
+      }
+
+      if (interaction.isModalSubmit()) {
+        logger.info("interaction.modal.received", {
+          customId: interaction.customId,
+          interactionId: interaction.id,
+          guildId: interaction.guildId,
+          channelId: interaction.channelId,
+          userId: interaction.user.id,
+          userTag: interaction.user.tag
+        });
+
+        const handler = modalHandlers.find((item) =>
+          interaction.customId.startsWith(item.customIdPrefix)
+        );
+        if (!handler) {
+          await interaction.reply({ content: "Acao nao reconhecida.", flags: MessageFlags.Ephemeral });
+          logger.warn("interaction.modal.unknown", {
+            customId: interaction.customId,
+            interactionId: interaction.id,
+            userId: interaction.user.id
+          });
+          return;
+        }
+
+        const txName = handler.customIdPrefix.replace(/:+$/, "").replace(/:/g, ".");
+        await newrelic.startBackgroundTransaction(txName, "modal", async () => {
+          await handler.execute(interaction, { store });
+          logger.info("interaction.modal.completed", {
             customId: interaction.customId,
             interactionId: interaction.id,
             guildId: interaction.guildId,

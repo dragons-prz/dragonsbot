@@ -615,6 +615,18 @@ export type RecruitmentPointsMode = "sum" | "highest";
 export interface RecruitmentVerificationTicketConfig {
   /** Canal de texto onde nasce a thread privada. `null` = ticket nao configurado. */
   parentChannelId: string | null;
+  /** Titulo do modal aberto ao clicar em "Verificar-se" (max 45). */
+  formTitle: string;
+  /** Label do campo de idade (max 45). */
+  ageLabel: string;
+  /** Dica dentro do campo de idade (max 100). */
+  agePlaceholder: string;
+  /** Label do dropdown "Veio por alguem?" no modal (max 45). */
+  recruiterPickerLabel: string;
+  /** Placeholder (instrucao) do dropdown "Veio por alguem?". */
+  recruiterPickerPlaceholder: string;
+  /** Label da opcao "entrei por conta propria". */
+  noRecruiterLabel: string;
   /** Nome da thread. Vars: `{user}` `{date}` `{shortid}`. */
   threadNameTemplate: string;
   /** Primeiro post da thread. Vars: `{user}` `{recruiter}`. */
@@ -625,10 +637,6 @@ export interface RecruitmentVerificationTicketConfig {
   closeMessage: string;
   /** Minutos sem recrutamento ate marcar todo o cargo `recruiter`. */
   escalateAfterMinutes: number;
-  /** Placeholder do select "Veio por alguem?". */
-  recruiterPickerPlaceholder: string;
-  /** Label da opcao "entrei por conta propria". */
-  noRecruiterLabel: string;
 }
 
 /**
@@ -796,14 +804,18 @@ export const DEFAULT_RECRUITMENT_FLOW_CONFIG: Omit<
   },
   verificationTicket: {
     parentChannelId: null,
+    formTitle: "Verificacao",
+    ageLabel: "Idade",
+    agePlaceholder: "apenas numero, entre 14 e 49",
+    recruiterPickerLabel: "Veio por alguem?",
+    recruiterPickerPlaceholder: "Selecione quem indicou voce",
+    noRecruiterLabel: "Nenhum — entrei por conta propria",
     threadNameTemplate: "verificacao-{user}-{shortid}",
     openMessage: "Ola {user}! Um recrutador vai te atender por aqui.",
     escalationMessage:
       "{user} esta aguardando ha mais de 1h — alguem pode dar continuidade?",
     closeMessage: "Ticket de {user} encerrado por {closer}.",
-    escalateAfterMinutes: 60,
-    recruiterPickerPlaceholder: "Veio por alguem?",
-    noRecruiterLabel: "Nenhum — entrei por conta propria"
+    escalateAfterMinutes: 60
   },
   familyAreaId: null,
   familyRoute: { sheetChannelId: null, approverRoleIds: [] },

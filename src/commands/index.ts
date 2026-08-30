@@ -1,9 +1,7 @@
 import { blacklistCommand } from "./blacklist";
 import { configCommand } from "./config";
 import { painelCommand, panelButtonHandler, panelSelectHandler } from "./painel";
-import {
-  verificationTicketPickHandler
-} from "./panel-actions/verification-ticket";
+import { verificationTicketFormHandler } from "./panel-actions/verification-ticket";
 import { pontosCommand } from "./pontos";
 import { pontosDarCommand } from "./pontos-dar";
 import { pontosResetarButtonHandler, pontosResetarCommand } from "./pontos-resetar";
@@ -16,7 +14,7 @@ import {
   recruitmentWizardSelectHandler
 } from "./recruitment/wizard";
 import { ticketActionButtonHandler } from "./ticket-actions";
-import { ButtonHandler, SelectMenuHandler, SlashCommand } from "./types";
+import { ButtonHandler, ModalHandler, SelectMenuHandler, SlashCommand } from "./types";
 
 export const commands: SlashCommand[] = [
   configCommand,
@@ -42,6 +40,6 @@ export const buttonHandlers: ButtonHandler[] = [
 ];
 export const selectMenuHandlers: SelectMenuHandler[] = [
   recruitmentWizardSelectHandler,
-  panelSelectHandler,
-  verificationTicketPickHandler
+  panelSelectHandler
 ];
+export const modalHandlers: ModalHandler[] = [verificationTicketFormHandler];
