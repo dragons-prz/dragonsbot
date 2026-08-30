@@ -56,6 +56,7 @@ import {
   CreateTicketInput,
   SupportCategoryCloseAction,
   SupportCategoryConfig,
+  TicketKind,
   TicketRecord,
   TicketStatus
 } from "../../domain/types";
@@ -104,6 +105,8 @@ interface RecruitmentDocument {
   areaRoleIds?: string[];
   areaLabels?: string[];
   points?: number;
+  ticketId?: string | null;
+  ticketThreadId?: string | null;
   sheetChannelId?: string | null;
   sheetMessageId?: string | null;
   sheetPresentation?: RecruitmentSheetSnapshot | null;
@@ -254,6 +257,11 @@ interface TicketDocument {
   threadId: string;
   pingMessageId: string;
   status: TicketStatus;
+  kind?: TicketKind;
+  declaredRecruiterUserId?: string | null;
+  escalateAt?: string | null;
+  escalatedAt?: string | null;
+  recruitmentId?: number | null;
   claimedByUserId: string | null;
   claimedAt: string | null;
   closedByUserId: string | null;
@@ -731,8 +739,19 @@ export class FirestoreDragonsStore implements DragonsStore {
       stepThree: data?.stepThree ?? defaults.stepThree,
       outcome: data?.outcome ?? defaults.outcome,
       sheet: data?.sheet ?? defaults.sheet,
+      verificationTicket: data?.verificationTicket
+        ? { ...defaults.verificationTicket, ...data.verificationTicket }
+        : defaults.verificationTicket,
+      familyAreaId: data?.familyAreaId ?? defaults.familyAreaId,
+      familyRoute: data?.familyRoute
+        ? { ...defaults.familyRoute, ...data.familyRoute }
+        : defaults.familyRoute,
+      areaRoute: data?.areaRoute
+        ? { ...defaults.areaRoute, ...data.areaRoute }
+        : defaults.areaRoute,
       approverRoleIds: data?.approverRoleIds ?? defaults.approverRoleIds,
       pointsGrantRoleIds: data?.pointsGrantRoleIds ?? defaults.pointsGrantRoleIds,
+      pointsResetRoleIds: data?.pointsResetRoleIds ?? defaults.pointsResetRoleIds,
       pointsMode: data?.pointsMode ?? defaults.pointsMode,
       minManualPoints: data?.minManualPoints ?? defaults.minManualPoints,
       maxManualPoints: data?.maxManualPoints ?? defaults.maxManualPoints,
@@ -743,6 +762,8 @@ export class FirestoreDragonsStore implements DragonsStore {
       notApproverMessage: data?.notApproverMessage ?? defaults.notApproverMessage,
       notDraftOwnerMessage: data?.notDraftOwnerMessage ?? defaults.notDraftOwnerMessage,
       notConfiguredMessage: data?.notConfiguredMessage ?? defaults.notConfiguredMessage,
+      blockedAlreadyInFamilyMessage:
+        data?.blockedAlreadyInFamilyMessage ?? defaults.blockedAlreadyInFamilyMessage,
       createdAt: data?.createdAt ?? now,
       updatedAt: data?.updatedAt ?? now
     };
@@ -912,6 +933,8 @@ export class FirestoreDragonsStore implements DragonsStore {
         areaRoleIds: input.areaRoleIds ?? [],
         areaLabels: input.areaLabels ?? [],
         points: input.points ?? 0,
+        ticketId: input.ticketId ?? null,
+        ticketThreadId: input.ticketThreadId ?? null,
         sheetChannelId: null,
         sheetMessageId: null,
         sheetPresentation: input.sheetPresentation ?? null,
@@ -929,6 +952,25 @@ export class FirestoreDragonsStore implements DragonsStore {
   async getRecruitment(id: number): Promise<Recruitment | null> {
     const snapshot = await this.recruitmentRef(id).get();
     return snapshot.exists ? this.mapRecruitment(snapshot.data() as RecruitmentDocument) : null;
+  }
+
+  async hasApprovedFamilyRecruitment(
+    guildId: string,
+    recruitUserId: string,
+    familyAreaId: string
+  ): Promise<boolean> {
+    // Reusa o mesmo indice de `findPendingRecruitmentByUser` (guildId +
+    // recruitUserId + status); o `array-contains` da area fica em memoria
+    // (um usuario tem poucos recrutamentos aprovados).
+    const snapshot = await this.db
+      .collection("recruitments")
+      .where("guildId", "==", guildId)
+      .where("recruitUserId", "==", recruitUserId)
+      .where("status", "==", "approved")
+      .get();
+    return snapshot.docs.some((doc) =>
+      ((doc.data() as RecruitmentDocument).areaOptionIds ?? []).includes(familyAreaId)
+    );
   }
 
   async findPendingRecruitmentByUser(guildId: string, recruitUserId: string): Promise<Recruitment | null> {
@@ -1168,6 +1210,86 @@ export class FirestoreDragonsStore implements DragonsStore {
 
       return updatedMember;
     });
+  }
+
+  async resetMemberPoints(guildId: string, userId: string, reason: string): Promise<MemberProfile> {
+    const now = new Date().toISOString();
+    return this.db.runTransaction(async (transaction) => {
+      const memberRef = this.memberRef(guildId, userId);
+      const snapshot = await transaction.get(memberRef);
+      const hierarchyRoles = await this.getHierarchyRoles(guildId);
+      const current = this.mapMemberFromSnapshot(
+        guildId,
+        userId,
+        snapshot.data() as MemberDocument | undefined,
+        hierarchyRoles
+      );
+      const baseRank = this.getRankForPoints(0, hierarchyRoles);
+      const updated: MemberProfile = {
+        guildId,
+        userId,
+        points: 0,
+        recruitments: current.recruitments,
+        rankName: baseRank.name,
+        rankRoleId: baseRank.roleId,
+        updatedAt: now
+      };
+      transaction.set(memberRef, updated);
+      if (current.points !== 0) {
+        transaction.create(this.memberPointEventRef(), {
+          guildId,
+          userId,
+          points: -current.points,
+          reason,
+          createdAt: now,
+          createdAtTimestamp: Timestamp.now()
+        });
+      }
+      return updated;
+    });
+  }
+
+  async resetAllMemberPoints(guildId: string, reason: string): Promise<number> {
+    const hierarchyRoles = await this.getHierarchyRoles(guildId);
+    const baseRank = this.getRankForPoints(0, hierarchyRoles);
+    const snapshot = await this.db.collection("members").where("guildId", "==", guildId).get();
+    const now = new Date().toISOString();
+    let affected = 0;
+    let batch = this.db.batch();
+    let pending = 0;
+    for (const doc of snapshot.docs) {
+      const data = doc.data() as MemberDocument;
+      if ((data.points ?? 0) === 0) {
+        continue;
+      }
+      batch.set(doc.ref, {
+        ...data,
+        points: 0,
+        rankName: baseRank.name,
+        rankRoleId: baseRank.roleId,
+        updatedAt: now
+      });
+      batch.create(this.memberPointEventRef(), {
+        guildId,
+        userId: data.userId,
+        points: -(data.points ?? 0),
+        reason,
+        createdAt: now,
+        createdAtTimestamp: Timestamp.now()
+      });
+      affected += 1;
+      pending += 2;
+      // Firestore limita um batch a 500 escritas.
+      if (pending >= 450) {
+        await batch.commit();
+        batch = this.db.batch();
+        pending = 0;
+      }
+    }
+    if (pending > 0) {
+      await batch.commit();
+    }
+    return affected;
   }
 
   async ensureMemberProfile(guildId: string, userId: string): Promise<MemberProfileResult> {
@@ -1645,12 +1767,17 @@ export class FirestoreDragonsStore implements DragonsStore {
       id: ref.id,
       guildId: input.guildId,
       panelId: input.panelId,
-      categoryId: input.categoryId,
+      categoryId: input.categoryId ?? "",
       openerUserId: input.openerUserId,
       parentChannelId: input.parentChannelId,
       threadId: input.threadId,
       pingMessageId: input.pingMessageId,
       status: "open",
+      kind: input.kind ?? "support",
+      declaredRecruiterUserId: input.declaredRecruiterUserId ?? null,
+      escalateAt: input.escalateAt ?? null,
+      escalatedAt: null,
+      recruitmentId: null,
       claimedByUserId: null,
       claimedAt: null,
       closedByUserId: null,
@@ -1717,6 +1844,56 @@ export class FirestoreDragonsStore implements DragonsStore {
     });
   }
 
+  async getVerificationTicketByThread(
+    guildId: string,
+    threadId: string
+  ): Promise<TicketRecord | null> {
+    const snapshot = await this.db
+      .collection("tickets")
+      .where("threadId", "==", threadId)
+      .limit(5)
+      .get();
+    const match = snapshot.docs
+      .map((doc) => this.mapTicket(doc.data() as TicketDocument))
+      .find((ticket) => ticket.guildId === guildId && ticket.kind === "verification");
+    return match ?? null;
+  }
+
+  async linkTicketRecruitment(ticketId: string, recruitmentId: number): Promise<void> {
+    await this.ticketRef(ticketId).update({
+      recruitmentId,
+      escalateAt: null,
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  async markTicketEscalated(ticketId: string): Promise<void> {
+    await this.ticketRef(ticketId).update({
+      escalatedAt: new Date().toISOString(),
+      escalateAt: null,
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  async listTicketsToEscalate(nowIso: string): Promise<TicketRecord[]> {
+    // Volume baixo (so tickets de verificacao abertos com recrutador
+    // declarado). Filtra `escalateAt`/status em memoria para nao exigir um
+    // indice composto novo.
+    const snapshot = await this.db
+      .collection("tickets")
+      .where("kind", "==", "verification")
+      .get();
+    return snapshot.docs
+      .map((doc) => this.mapTicket(doc.data() as TicketDocument))
+      .filter(
+        (ticket) =>
+          ticket.escalateAt !== null &&
+          ticket.escalatedAt === null &&
+          ticket.escalateAt <= nowIso &&
+          (ticket.status === "open" || ticket.status === "claimed")
+      );
+  }
+
   private mapSupportCategory(data: SupportCategoryDocument): SupportCategoryConfig {
     return {
       id: data.id,
@@ -1746,6 +1923,11 @@ export class FirestoreDragonsStore implements DragonsStore {
       threadId: data.threadId,
       pingMessageId: data.pingMessageId,
       status: data.status,
+      kind: data.kind ?? "support",
+      declaredRecruiterUserId: data.declaredRecruiterUserId ?? null,
+      escalateAt: data.escalateAt ?? null,
+      escalatedAt: data.escalatedAt ?? null,
+      recruitmentId: data.recruitmentId ?? null,
       claimedByUserId: data.claimedByUserId ?? null,
       claimedAt: data.claimedAt ?? null,
       closedByUserId: data.closedByUserId ?? null,
@@ -1874,6 +2056,8 @@ export class FirestoreDragonsStore implements DragonsStore {
       areaRoleIds: data.areaRoleIds ?? [],
       areaLabels: data.areaLabels ?? [],
       points: data.points ?? 0,
+      ticketId: data.ticketId ?? null,
+      ticketThreadId: data.ticketThreadId ?? null,
       sheetChannelId: data.sheetChannelId ?? null,
       sheetMessageId: data.sheetMessageId ?? null,
       sheetPresentation: data.sheetPresentation ?? null,

@@ -10,6 +10,8 @@ import {
   RecruitmentDraft,
   RecruitmentFlowConfig,
   RecruitmentPresentationSnapshot,
+  RecruitmentRouteConfig,
+  RecruitmentRouteKind,
   RecruitmentSheetSnapshot,
   calculateRecruitmentPoints
 } from "../../domain/types";
@@ -103,9 +105,16 @@ export function buildPresentationSnapshot(
   };
 }
 
-/** Mesma ideia para a ficha, que e outra mensagem e por isso tem layout proprio. */
+/**
+ * Mesma ideia para a ficha, que e outra mensagem e por isso tem layout
+ * proprio. `route`/`routeKind` congelam o destino resolvido (canal e cargos
+ * que confirmam) — a rota Familia manda a ficha aos Founders, qualquer
+ * outra area, a lideranca de REC.
+ */
 export function buildSheetSnapshot(
   config: RecruitmentFlowConfig,
+  route: RecruitmentRouteConfig,
+  routeKind: RecruitmentRouteKind,
   logContext: Record<string, unknown>
 ): RecruitmentSheetSnapshot {
   const layout = config.sheet.message.layout;
@@ -120,10 +129,29 @@ export function buildSheetSnapshot(
 
   return {
     ...config.sheet,
+    channelId: route.sheetChannelId,
+    routeKind,
+    routeApproverRoleIds: route.approverRoleIds,
     queued: { ...config.sheet.queued, layout },
     approved: { ...config.sheet.approved, layout },
     rejected: { ...config.sheet.rejected, layout }
   };
+}
+
+/**
+ * Resolve a rota da ficha pelas areas escolhidas: se a area marcada como
+ * Familia (`familyAreaId`) esta entre elas -> rota Familia (Founders);
+ * senao -> rota Area (lideranca de REC).
+ */
+export function resolveRecruitmentRoute(
+  config: RecruitmentFlowConfig,
+  areaIds: readonly string[]
+): { route: RecruitmentRouteConfig; kind: RecruitmentRouteKind } {
+  const isFamily =
+    config.familyAreaId !== null && areaIds.includes(config.familyAreaId);
+  return isFamily
+    ? { route: config.familyRoute, kind: "family" }
+    : { route: config.areaRoute, kind: "area" };
 }
 
 export function formatAccountCreatedAt(user: User): string {
@@ -320,17 +348,22 @@ export const recrutarCommand: SlashCommand = {
       return;
     }
 
+    const anyRouteChannel =
+      flowConfig.familyRoute.sheetChannelId ??
+      flowConfig.areaRoute.sheetChannelId ??
+      flowConfig.sheet.channelId;
     if (
       flowConfig.starterRoles.length === 0 ||
       flowConfig.areas.length === 0 ||
-      !flowConfig.sheet.channelId
+      !anyRouteChannel
     ) {
       logger.warn("recruitment_config.missing", {
         guildId,
         recruiterUserId: recruiter.id,
         starterRoles: flowConfig.starterRoles.length,
         areas: flowConfig.areas.length,
-        sheetChannelId: flowConfig.sheet.channelId
+        familyRouteChannelId: flowConfig.familyRoute.sheetChannelId,
+        areaRouteChannelId: flowConfig.areaRoute.sheetChannelId
       });
       await interaction.editReply(flowConfig.notConfiguredMessage);
       return;
@@ -369,6 +402,21 @@ export const recrutarCommand: SlashCommand = {
       await interaction.editReply(
         `⚠️ Este usuario esta na blacklist e nao pode ser recrutado. Motivo: ${blacklistEntry.reason}`
       );
+      return;
+    }
+
+    // Nao da para recrutar de novo para a Familia quem ja entrou nela.
+    if (
+      flowConfig.familyAreaId &&
+      (await store.hasApprovedFamilyRecruitment(guildId, recruitUser.id, flowConfig.familyAreaId))
+    ) {
+      logger.warn("recruitment.draft_blocked", {
+        reason: "already_in_family",
+        guildId,
+        recruiterUserId: recruiter.id,
+        recruitUserId: recruitUser.id
+      });
+      await interaction.editReply(flowConfig.blockedAlreadyInFamilyMessage);
       return;
     }
 

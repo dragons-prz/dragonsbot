@@ -196,22 +196,41 @@ Quando executado com sucesso, o bot aplica o cargo `member`, garante o perfil do
 
 Se existir recrutamento pendente para o usuario, a verificacao direta e bloqueada para preservar o fluxo de pontos do recrutador.
 
-## Fila de verificacao
+## Entrada e verificacao por ticket
 
-Quando um membro entra no servidor, o bot envia um card no canal `verification` (ver `/config set-channel`) com:
+Quando um membro entra no servidor, o bot so **registra a entrada**
+(`MemberEntry`) — nao ha mais card automatico na fila de verificacao. A porta
+unica e um **painel de texto "Verificar-se"** (um painel com `kind: "text"` e
+um botao com a acao `verification-ticket`).
 
-- mencao ao cargo `founder` configurado
-- foto/avatar
-- nome e mencao
-- ID copiavel
-- data/hora de entrada
-- botao `Verificar`
+Fluxo (spec: `docs/specs/2026-08-30-verificacao-recrutamento-por-ticket.md`):
 
-O botao so pode ser usado por Founders. Ao clicar, o bot coloca a verificacao na fila, muda o card para `Verificacao enfileirada` e responde rapidamente. Um worker interno processa a fila em seguida, aplica os cargos corretos, marca a entrada como verificada diretamente e desativa o botao.
+1. O membro clica em **Verificar-se** -> o bot responde (so para ele) com o
+   select **"Veio por alguem?"**: a lista dos membros com o cargo `recruiter`
+   (montada ao vivo) + a opcao **Nenhum**.
+2. Ao escolher, nasce uma **thread privada** (ticket `kind: "verification"`)
+   no canal configurado em `verificationTicket.parentChannelId`:
+   - **recrutador escolhido** -> a thread menciona so ele; se em
+     `verificationTicket.escalateAfterMinutes` (default 60) o membro nao foi
+     recrutado, um worker marca o cargo `recruiter` inteiro na thread;
+   - **Nenhum** -> a thread ja menciona o cargo `recruiter` e nao escala.
+3. Um recrutador roda **`/recrutar @membro` dentro da thread** (mesmo wizard).
+   O recrutamento fica vinculado ao ticket.
+4. A ficha e roteada pela area escolhida na etapa 2 (ver "Rotas da ficha"
+   abaixo). Ao confirmar:
+   - **rota Familia**: a thread recebe a mensagem de encerramento, e trancada
+     e arquivada, e o ticket fecha. `/recrutar` para a Familia passa a ser
+     recusado para esse membro (`blockedAlreadyInFamilyMessage`).
+   - **rota Area**: a thread so e arquivada e o ticket fecha.
 
-Se um recrutador usar `/recrutar` antes da verificacao direta, o card vira `Recrutamento pendente` e o botao de verificacao direta e desativado.
+A mensagem publica do wizard some no envio (o desfecho vai efemero so para o
+recrutador), entao a thread nao fica com um `/recrutar` "refazivel".
 
-Se um recrutador usar `/recrutar` depois da verificacao direta — a qualquer momento, sem janela de tempo — o card vira `Credito de recrutamento pendente`. Quando a ficha for aprovada, o recrutador recebe os pontos e o card vira `Credito de recrutamento aprovado`.
+O botao **Fechar ticket** da thread pode ser usado a qualquer momento pelo
+cargo `recruiter`. `/verificar` (Founder) continua como atalho de emergencia.
+Os pontos do recrutamento vao sempre para quem roda `/recrutar` (comportamento
+inalterado); a resposta do "Veio por alguem?" so define quem e mencionado na
+thread e o escalonamento.
 
 ## Saidas
 
@@ -264,8 +283,17 @@ Mostra sua pontuacao atual e a quantidade de recrutamentos aprovados feitos por 
 
 Da ou remove pontos manualmente. Quem pode usar e definido no painel
 (`pointsGrantRoleIds`), nao por permissao do Discord. A quantidade aceita valor
-negativo e fica limitada a `minManualPoints`/`maxManualPoints`. Depois de gravar,
-o cargo de rank e sincronizado (sobe ou desce junto com a pontuacao).
+negativo e fica limitada a `minManualPoints`/`maxManualPoints`. O `rankName`
+mostrado e so o rank teorico (calculado pela pontuacao) — **o bot nao aplica
+nem remove cargo de rank**; mudanca de cargo segue o sistema da administracao.
+
+### `/pontos-resetar [usuario:<membro>] [todos:<bool>]`
+
+Zera os **pontos totais**. Informe exatamente um de `usuario` (zera um membro)
+ou `todos:True` (zera o servidor inteiro, com botao de confirmacao que so quem
+rodou o comando pode clicar). So `points` volta a 0 — `recruitments` e o
+historico ficam, e nenhum cargo e mexido. Quem pode usar vem de
+`pointsResetRoleIds` no painel; se estiver vazio, cai em `pointsGrantRoleIds`.
 
 ### `/ranking limite:<numero>`
 
@@ -287,10 +315,23 @@ Os paineis ficam salvos na colecao `panels` do Firestore, o que permite reconfig
 
 **Layout do painel (`layout`).** `layout: "embed" | "container"` (ausente = `"embed"`). No `embed` (formato historico) a imagem fica embaixo e o `title` do embed nao renderiza emoji customizado do servidor. No `container` a mensagem usa **Components V2** (`ContainerBuilder`): a imagem vira um banner no topo e o titulo/descricao viram texto markdown (emoji de qualquer tipo, em qualquer lugar). A flag `IsComponentsV2` **nao pode ser ligada/desligada editando** uma mensagem ja publicada — quando o `layout` de um painel publicado muda, o `publishPanelToChannel` apaga a mensagem antiga e reposta uma nova (evento `panel.layout_reposted`, `panelJob` fica `published` em vez de `updated`).
 
-**Tipo do painel e acoes (`kind` / `action`).** Um painel tem `kind: "buttons" | "select"` (ausente = `"buttons"`). Quando `kind === "select"`, o painel mostra um unico dropdown (`PanelSelectConfig`: `placeholder` + `options[]`) no lugar das linhas de botoes; cada opcao tem `label`, `description`, `emoji` e uma acao. Cada botao **e** cada opcao carrega uma `PanelActionConfig`:
+**Tipo do painel e acoes (`kind` / `action`).** Um painel tem `kind: "buttons" | "select" | "text"` (ausente = `"buttons"`). Quando `kind === "select"`, o painel mostra um unico dropdown (`PanelSelectConfig`: `placeholder` + `options[]`) no lugar das linhas de botoes; cada opcao tem `label`, `description`, `emoji` e uma acao. Quando `kind === "text"`, o painel e so a mensagem (titulo/descricao/imagem/cor/layout) — os botoes sao **opcionais** (0..25) e nao ha dropdown; e o formato dos paineis informativos (regras, avisos) e do painel de verificacao. Cada botao **e** cada opcao carrega uma `PanelActionConfig`:
 
 - `{ type: "reply", response, responseImageUrl, responseColor }` - o comportamento historico (embed efemero). Documentos antigos sem `action` sao lidos como esta acao, montada a partir dos campos legados do botao.
-- `{ type: "run", actionId, params }` - dispara uma acao registrada no bot (`src/commands/panel-actions/registry.ts`). Hoje ha uma: `support-ticket` (ver abaixo). O `/painel add-botao` so cria acoes `reply`; acoes `run` sao configuradas pela `dragons-platform`.
+- `{ type: "run", actionId, params }` - dispara uma acao registrada no bot (`src/commands/panel-actions/registry.ts`). Hoje ha duas: `support-ticket` e `verification-ticket` (ver abaixo). O `/painel add-botao` so cria acoes `reply`; acoes `run` sao configuradas pela `dragons-platform`.
+
+### Verificacao (acao `verification-ticket`)
+
+Um botao com `action: { type: "run", actionId: "verification-ticket" }` (sem
+`params`) e o "Verificar-se". Ao clicar, o bot responde (efemero) com o select
+**"Veio por alguem?"** e, na escolha, cria a thread privada do ticket de
+verificacao. Toda a config vem de `recruitmentConfigs/{guildId}.verificationTicket`
+(escrita so pela `dragons-platform`): `parentChannelId`, `threadNameTemplate`
+(`{user}` `{date}` `{shortid}`), `openMessage` (`{user}` `{recruiter}`),
+`escalationMessage` (`{user}`), `closeMessage` (`{user}` `{closer}`),
+`escalateAfterMinutes`, `recruiterPickerPlaceholder`, `noRecruiterLabel`. Ver a
+secao "Entrada e verificacao por ticket" acima e
+`docs/specs/2026-08-30-verificacao-recrutamento-por-ticket.md`.
 
 ### Ticket de suporte (acao `support-ticket`)
 
@@ -325,26 +366,46 @@ Gerencia a lista de usuarios que nunca podem ser verificados ou recrutados. Apen
 - `remove usuario:<membro>` - remove o usuario da blacklist.
 - `listar` - lista os usuarios atualmente na blacklist com o motivo e quem adicionou.
 
-Enquanto um usuario estiver na blacklist, `/recrutar`, `/verificar` e o botao `Verificar` do card de entrada ficam bloqueados para ele, mostrando o motivo do bloqueio. Toda adicao/remocao gera um log com foto do usuario, motivo e responsavel no canal `blacklist` (veja `/config set-channel`). Os registros ficam na colecao `blacklist` do Firestore.
+Enquanto um usuario estiver na blacklist, `/recrutar` e `/verificar` ficam bloqueados para ele, mostrando o motivo do bloqueio. Toda adicao/remocao gera um log com foto do usuario, motivo e responsavel no canal `blacklist` (veja `/config set-channel`). Os registros ficam na colecao `blacklist` do Firestore.
+
+## Rotas da ficha
+
+A ficha e postada num canal que depende da area escolhida na etapa 2:
+
+- se a area marcada como **Familia** (`familyAreaId`) estiver entre as
+  escolhidas -> **rota Familia**: canal `familyRoute.sheetChannelId`,
+  confirmada pelos cargos `familyRoute.approverRoleIds` (os Founders,
+  "Verificacao das Posses");
+- senao -> **rota Area**: canal `areaRoute.sheetChannelId`, confirmada pelos
+  cargos `areaRoute.approverRoleIds` (lideranca de REC).
+
+O canal e os cargos da rota sao **congelados no envio** (no
+`sheetPresentation`, junto de `routeKind`), entao editar a config no painel so
+vale para fichas novas. `maxAreas` nasce em `1` para nao misturar rotas;
+recrutamento legado (sem `sheetPresentation`) cai no `approverRoleIds` do topo.
 
 ## Aprovacao
 
 Os botoes da ficha so podem ser usados por quem tem um dos cargos aprovadores
-configurados no painel (`approverRoleIds`). O cargo `founder` continua mandando
-na fila de verificacao de entrada, nao aqui.
+da rota congelada na ficha (`familyRoute`/`areaRoute`); recrutamento legado cai
+no `approverRoleIds` do topo. O cargo `founder` continua mandando na entrada de
+membro, nao aqui.
 
 Ao **confirmar**, a acao entra na fila `memberActionJobs` (que serializa as
 escritas) e o bot:
 
 - muda o recrutamento para `approved`
-- aplica o cargo `member` e o rank base
+- aplica o cargo `member` e o **rank base** (`Novato`)
 - aplica o cargo de iniciante escolhido (nenhum, se a etapa 1 usou "Nenhum
   cargo") e os cargos de todas as areas escolhidas
 - credita ao recrutador os pontos congelados na ficha (soma dos pontos das areas,
   ou o maior deles se `pointsMode` for `highest`)
-- sincroniza o cargo de rank do recrutador e manda DM quando ele sobe
+- **nao** sobe/desce cargo de rank (sem up automatico — so o rank base entra)
 - anuncia o recrutamento no canal de recrutamento
 - edita a ficha para o estado "aprovada", com os botoes desativados
+- se o `/recrutar` rodou num ticket de verificacao: rota Familia -> encerra e
+  arquiva a thread + fecha o ticket; rota Area -> so arquiva a thread + fecha o
+  ticket
 
 Ao **rejeitar**, nada de cargo ou ponto acontece: o recrutamento vira `rejected`,
 a entrada do membro volta a ficar livre (um novo `/recrutar` para o mesmo usuario
@@ -364,17 +425,27 @@ O documento `recruitmentConfigs/{guildId}` e escrito **so** pela
 
 - `starterRoles`: opcoes da etapa 1, cada uma com um cargo do Discord.
 - `areas`: opcoes da etapa 2, cada uma com 1..n cargos e uma pontuacao.
-- `minAreas` / `maxAreas`, `pointsMode` (`sum` default, ou `highest`).
-- `sheet`: canal da ficha, formato das mensagens (pendente, enfileirada,
-  aprovada, rejeitada), botoes, posicao da foto e se marca os aprovadores.
+- `minAreas` / `maxAreas` (default `1`), `pointsMode` (`sum` default, ou `highest`).
+- `familyAreaId`, `familyRoute` / `areaRoute` (canal da ficha + cargos que
+  confirmam, por rota — ver "Rotas da ficha").
+- `verificationTicket`: canal-pai da thread, templates (`threadNameTemplate`,
+  `openMessage`, `escalationMessage`, `closeMessage`), `escalateAfterMinutes`,
+  `recruiterPickerPlaceholder`, `noRecruiterLabel`.
+- `pointsResetRoleIds`: cargos do `/pontos-resetar` (vazio = `pointsGrantRoleIds`).
+- `blockedAlreadyInFamilyMessage`: bloqueio do `/recrutar` para quem ja entrou
+  na Familia.
+- `sheet`: formato das mensagens da ficha (pendente, enfileirada, aprovada,
+  rejeitada), botoes, posicao da foto e se marca os aprovadores. `sheet.channelId`
+  e o `approverRoleIds` do topo ficam como fallback dos recrutamentos legados.
 - `stepOne` / `stepTwo` / `stepThree` / `outcome`: uma `RecruitmentMessageConfig`
   por mensagem (layout `embed`/`container`, titulo, texto, cor, imagem) e os
   botoes de cada etapa (texto, emoji e cor). `outcome.submitted` e
   `outcome.cancelled` sao enviados so ao recrutador (mensagem "Apenas para
   voce"); `outcome.expired` fica configurado mas nao e renderizado (a mensagem
   publica so e apagada ao expirar).
-- `approverRoleIds`, `pointsGrantRoleIds`, `minManualPoints`/`maxManualPoints`,
-  `draftTtlMinutes` e os textos avulsos (placeholders e mensagens de bloqueio).
+- `approverRoleIds` (legado), `pointsGrantRoleIds`, `pointsResetRoleIds`,
+  `minManualPoints`/`maxManualPoints`, `draftTtlMinutes` e os textos avulsos
+  (placeholders e mensagens de bloqueio).
 
 Titulo e texto sao templates: `{recruited}`, `{recruiter}`, `{role}`, `{areas}`,
 `{step}`, `{total}`, `{min}`, `{max}`, `{points}`, `{createdAt}`, `{approver}`,
@@ -393,9 +464,14 @@ ficha, o `/recrutar` responde a mensagem de "fluxo nao configurado".
 
 A pontuacao fica na entidade generica de membro, nao em uma entidade exclusiva de recrutador. Hoje recrutamento soma pontos nessa entidade, e futuras areas tambem poderao somar pontos no mesmo perfil.
 
-A hierarquia e configurada no Firestore pela colecao `hierarchyRoles`. O bot cria uma configuracao inicial automaticamente, mas os cargos e pontos podem ser editados diretamente na base.
+A hierarquia e configurada no Firestore pela colecao `hierarchyRoles`. O bot cria uma configuracao inicial automaticamente, mas os cargos e pontos podem ser editados diretamente na base. Nao ha UI na `dragons-platform` para isso.
 
-O rank base e `Novato`, com cargo `1488092923588247563` e 0 pontos. `Delusions` comeca em 1 ponto, entao o recrutador sobe para `Delusions` automaticamente ao fazer o primeiro recrutamento aprovado.
+**Nao ha mais up automatico.** O bot calcula o `rankName` teorico pela
+pontuacao (mostrado em `/pontos` e `/ranking`) e aplica so o **rank base**
+(`Novato`) na entrada, junto do cargo `member`. Subir ou descer de cargo de
+rank e **manual** — segue o sistema da administracao. `hierarchyRoles` fica
+como dado de exibicao; o bot nao faz mais `roles.add`/`roles.remove` de rank
+nem manda DM de "voce subiu".
 
 Campos de cada documento:
 
@@ -405,7 +481,9 @@ Campos de cada documento:
 - `points`: pontos minimos para atingir o rank.
 - `order`: ordem do rank, usada como desempate e organizacao.
 
-O criterio de subida e somente pontos. O campo `recruitments` continua no perfil do membro apenas como estatistica.
+Os pontos continuam acumulando (recrutamento aprovado, `/pontos-dar`) e
+`/pontos-resetar` os zera. O campo `recruitments` continua no perfil do membro
+apenas como estatistica e nao e afetado pelo reset.
 
 ## Banco de dados
 
@@ -427,7 +505,8 @@ Colecoes usadas no Firestore:
 - `panels`
 - `panelJobs`
 - `supportCategories` (categorias de ticket; escrita so pela `dragons-platform`)
-- `tickets` (tickets de suporte abertos; escrita so pelo bot)
+- `tickets` (tickets de suporte **e** de verificacao; escrita so pelo bot — o
+  campo `kind` distingue `"support"` de `"verification"`)
 - `openTicketKeys` (trava de 1 ticket aberto por usuario)
 - `blacklist`
 
@@ -471,6 +550,7 @@ Eventos principais:
 - `config.number_set`
 - `points.viewed`
 - `points.granted_manual` / `points.grant_blocked`
+- `points.reset` / `points.reset_blocked`
 - `ranking.viewed`
 - `panel.created`
 - `panel.image_set`
@@ -489,6 +569,12 @@ Eventos principais:
 - `ticket.opened` / `ticket.open_denied` / `ticket.open_failed`
 - `ticket.claimed` / `ticket.closed`
 - `ticket.opener_add_failed` / `ticket.ping_edit_failed`
+- `verification_ticket.opened` / `verification_ticket.open_denied` / `verification_ticket.open_failed`
+- `verification_ticket.recruiter_list_truncated` / `verification_ticket.opener_add_failed`
+- `verification_ticket.escalated` / `verification_ticket.escalate_failed` / `verification_ticket.escalation_tick_failed`
+- `verification_ticket.recruited_family` / `verification_ticket.recruited_area` / `verification_ticket.finalize_failed`
+- `verification_ticket.link_failed`
+- `member_entry.registered` (entrada de membro — sem mais card automatico)
 - `interaction.select.received` / `interaction.select.completed`
 - `member_action_job.failed`
 - `member_action_job.restore_ui_failed`

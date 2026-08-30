@@ -41,8 +41,14 @@ const PANEL_JOB_STALE_AFTER_MS = 5 * 60 * 1000;
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
 const CLEAR_COLOR_KEYWORDS = new Set(["limpar", "nenhuma", "remover", "none"]);
 
-/** `true` quando o painel nao tem nenhum componente para renderizar/publicar. */
+/**
+ * `true` quando o painel nao tem nenhum componente para renderizar/publicar.
+ * Painel `text` e informativo: publica so com a mensagem, botoes opcionais.
+ */
 export function panelIsEmpty(panel: PanelConfig): boolean {
+  if (panel.kind === "text") {
+    return false;
+  }
   return panel.kind === "select"
     ? !panel.select || panel.select.options.length === 0
     : panel.buttons.length === 0;

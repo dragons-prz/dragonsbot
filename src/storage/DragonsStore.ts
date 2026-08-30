@@ -89,6 +89,8 @@ export interface DragonsStore {
   createRecruitment(input: CreateRecruitmentInput): Promise<Recruitment>;
   getRecruitment(id: number): Promise<Recruitment | null>;
   findPendingRecruitmentByUser(guildId: string, recruitUserId: string): Promise<Recruitment | null>;
+  /** `true` se o usuario ja tem um recrutamento `approved` cuja area inclui `familyAreaId`. */
+  hasApprovedFamilyRecruitment(guildId: string, recruitUserId: string, familyAreaId: string): Promise<boolean>;
   setRecruitmentApprovalMessage(id: number, messageId: string): Promise<void>;
   addRecruitmentApprovalMessage(input: RecruitmentApprovalMessage): Promise<void>;
   getRecruitmentApprovalMessages(recruitmentId: number): Promise<RecruitmentApprovalMessage[]>;
@@ -100,6 +102,10 @@ export interface DragonsStore {
   approveRecruitmentAndAddMemberPoints(id: number, approvedByUserId: string, points: number, reason: string): Promise<ApprovedRecruitmentResult | null>;
 
   addMemberPoints(guildId: string, userId: string, points: number, reason: string): Promise<MemberProfile>;
+  /** Zera `points` de um membro (mantem `recruitments`). Recalcula o rank teorico. */
+  resetMemberPoints(guildId: string, userId: string, reason: string): Promise<MemberProfile>;
+  /** Zera `points` de todos os membros da guild. Retorna quantos perfis mudaram. */
+  resetAllMemberPoints(guildId: string, reason: string): Promise<number>;
   ensureMemberProfile(guildId: string, userId: string): Promise<MemberProfileResult>;
   getMemberProfile(guildId: string, userId: string): Promise<MemberProfileResult>;
   getMemberRanking(guildId: string, limit: number): Promise<MemberRankingEntry[]>;
@@ -145,6 +151,19 @@ export interface DragonsStore {
   claimTicket(ticketId: string, claimerUserId: string): Promise<TicketRecord | null>;
   /** Transacao: `open`/`claimed` -> `closed`. Retorna o ticket resultante, ou `null` se ja estava `closed` ou nao existe. */
   closeTicket(ticketId: string, closerUserId: string): Promise<TicketRecord | null>;
+
+  /**
+   * Ticket de verificacao (`kind: "verification"`) aberto na thread `threadId`,
+   * quando existir. Usado pelo `/recrutar` para saber se roda dentro de um
+   * ticket e vincular o recrutamento.
+   */
+  getVerificationTicketByThread(guildId: string, threadId: string): Promise<TicketRecord | null>;
+  /** Vincula um recrutamento ao ticket e zera `escalateAt` (nao escala mais). */
+  linkTicketRecruitment(ticketId: string, recruitmentId: number): Promise<void>;
+  /** Marca que o cargo `recruiter` inteiro ja foi mencionado na thread. */
+  markTicketEscalated(ticketId: string): Promise<void>;
+  /** Tickets de verificacao abertos com `escalateAt` vencido e ainda nao escalados. */
+  listTicketsToEscalate(nowIso: string): Promise<TicketRecord[]>;
 
   addToBlacklist(guildId: string, userId: string, reason: string, addedByUserId: string): Promise<BlacklistEntry>;
   removeFromBlacklist(guildId: string, userId: string): Promise<BlacklistEntry | null>;

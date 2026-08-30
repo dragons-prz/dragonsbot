@@ -14,6 +14,7 @@ import { loadEnv } from "./config/env";
 import { buttonHandlers, commands, selectMenuHandlers } from "./commands";
 import { announceMemberExit, announceNewMember, startMemberActionJobWorker } from "./commands/recrutar";
 import { startPanelJobWorker } from "./commands/painel";
+import { startVerificationTicketEscalationWorker } from "./commands/panel-actions/verification-ticket";
 import { startRecruitmentDraftExpiryWorker } from "./commands/recruitment/wizard";
 import { SlashCommand } from "./commands/types";
 import { createStore } from "./storage/createStore";
@@ -36,6 +37,7 @@ async function main(): Promise<void> {
   let stopMemberActionJobWorker: () => void = () => undefined;
   let stopPanelJobWorker: () => void = () => undefined;
   let stopRecruitmentDraftExpiry: () => void = () => undefined;
+  let stopVerificationTicketEscalation: () => void = () => undefined;
 
   client.once(Events.ClientReady, (readyClient) => {
     logger.info("bot.ready", {
@@ -45,6 +47,7 @@ async function main(): Promise<void> {
     stopMemberActionJobWorker = startMemberActionJobWorker(client, store);
     stopPanelJobWorker = startPanelJobWorker(client, store);
     stopRecruitmentDraftExpiry = startRecruitmentDraftExpiryWorker(client, store);
+    stopVerificationTicketEscalation = startVerificationTicketEscalationWorker(client, store);
   });
 
   client.on(Events.GuildMemberAdd, async (member) => {
@@ -201,6 +204,7 @@ async function main(): Promise<void> {
     stopMemberActionJobWorker();
     stopPanelJobWorker();
     stopRecruitmentDraftExpiry();
+    stopVerificationTicketEscalation();
     client.destroy();
     await store.close();
     process.exit(0);

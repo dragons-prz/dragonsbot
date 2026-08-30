@@ -2,7 +2,6 @@ import { MessageFlags, SlashCommandBuilder } from "discord.js";
 
 import { getGuildId, memberHasAnyRole, requireGuildMember } from "../utils/discord";
 import { logger } from "../utils/logger";
-import { syncMemberRankRoles } from "../utils/rankRoles";
 import { SlashCommand } from "./types";
 
 /**
@@ -11,8 +10,9 @@ import { SlashCommand } from "./types";
  * cargo com mais frequencia do que dava para acompanhar por codigo.
  *
  * Aceita valor negativo (remocao), limitado por `minManualPoints`/
- * `maxManualPoints`. Depois de gravar, sincroniza o cargo de rank: sem isso,
- * mexer nos pontos na mao deixaria o cargo desalinhado da pontuacao.
+ * `maxManualPoints`. O `rankName` mostrado e so o rank teorico (calculado
+ * pela pontuacao) — o bot NAO aplica/remove cargo de rank automaticamente;
+ * mudanca de cargo segue o sistema da administracao.
  */
 export const pontosDarCommand: SlashCommand = {
   data: new SlashCommandBuilder()
@@ -83,18 +83,6 @@ export const pontosDarCommand: SlashCommand = {
 
     const { profile: before } = await store.getMemberProfile(guildId, targetUser.id);
     const after = await store.addMemberPoints(guildId, targetUser.id, amount, reason);
-
-    await syncMemberRankRoles(
-      interaction.guild!,
-      targetUser.id,
-      {
-        member: after,
-        previousRankName: before.rankName,
-        previousRankRoleId: before.rankRoleId,
-        rankChanged: before.rankRoleId !== after.rankRoleId
-      },
-      { source: "manual_grant", granterUserId: granter.id }
-    );
 
     logger.info("points.granted_manual", {
       guildId,

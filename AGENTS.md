@@ -21,8 +21,9 @@ se o comportamento mudar.
 
 ```
 src/
-  commands/     # comandos slash (/config, /recrutar, /verificar, /pontos, /pontos-dar, /ranking, /painel, /blacklist) + registry
+  commands/     # comandos slash (/config, /recrutar, /verificar, /pontos, /pontos-dar, /pontos-resetar, /ranking, /painel, /blacklist) + registry
     recruitment/  # fluxo de recrutamento em 3 etapas: wizard, ficha e montagem das mensagens
+    panel-actions/ # acoes `run` de painel: support-ticket, verification-ticket (+ worker de escalonamento)
   config/       # leitura/validação de variáveis de ambiente
   domain/       # tipos de domínio
   storage/      # interface DragonsStore + implementação Firestore
@@ -89,12 +90,22 @@ Sempre rode `npm run build` antes de reportar uma mudança como concluída.
   `config.role_set`) e documente o evento novo no README.
 - Mudanças em pontuação/hierarquia devem manter a regra de que pontos ficam no
   perfil genérico de membro (`members`), não em uma entidade exclusiva de
-  recrutador — áreas futuras somam no mesmo perfil.
+  recrutador — áreas futuras somam no mesmo perfil. **Não há up automático de
+  cargo de rank**: o bot só aplica o rank base na entrada e calcula o
+  `rankName` teórico; subir/descer de rank é manual. `syncMemberRankRoles` foi
+  removido — não reintroduza sync de cargo em `/pontos-dar` nem na aprovação.
 - O fluxo de `/recrutar` é configurado **só** pela `dragons-platform`
   (`recruitmentConfigs/{guildId}`); não adicione subcomando de `/config` para
   isso. Os tipos `RecruitmentFlowConfig` e companhia em `src/domain/types.ts`
-  são espelho de `dragons-platform/shared/src/recruitment-config.ts`: mudança
-  de forma exige PR coordenado nos dois repositórios.
+  — incluindo `RecruitmentVerificationTicketConfig`, `RecruitmentRouteConfig` e
+  `PanelKind` (agora com `"text"`) — são espelho de
+  `dragons-platform/shared/src/recruitment-config.ts` / `panel.ts`: mudança de
+  forma exige PR coordenado nos dois repositórios.
+- Entrada de membro: sem card automático — a porta é um painel `kind: "text"`
+  com botão `verification-ticket`, que abre uma thread (`tickets` com
+  `kind: "verification"`). A ficha do `/recrutar` é roteada por
+  `familyAreaId` → `familyRoute`/`areaRoute` (canal + cargos que confirmam),
+  congelados no `sheetPresentation` junto de `routeKind`.
 - O bot congela a configuração no início de cada recrutamento
   (`RecruitmentPresentationSnapshot` no rascunho, `sheetPresentation` no
   recrutamento). Toda montagem de mensagem lê o snapshot, nunca a configuração
