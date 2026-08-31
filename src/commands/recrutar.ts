@@ -261,6 +261,50 @@ export async function announceNewMember(member: GuildMember, store: Parameters<S
     userTag: member.user.tag,
     joinedAt
   });
+
+  await applyUnverifiedRole(member, store);
+}
+
+/**
+ * Aplica o cargo "Nao verificado" (`GuildConfig.unverifiedRoleId`, editavel
+ * pelo painel / `/config set-role unverified`) na entrada de qualquer membro.
+ * E removido depois por `applyMemberRoles` quando o membro ganha o cargo
+ * `member` (verificacao direta, recrutamento de Area ou de Familia). Falha de
+ * cargo vira log e nao derruba o registro da entrada.
+ */
+async function applyUnverifiedRole(member: GuildMember, store: CommandStore): Promise<void> {
+  const guildId = member.guild.id;
+  const config = await store.getGuildConfig(guildId);
+  const unverifiedRoleId = config.unverifiedRoleId;
+  const logContext = { guildId, userId: member.id, userTag: member.user.tag, unverifiedRoleId };
+
+  if (!unverifiedRoleId) {
+    return;
+  }
+  // Rejoin de quem ja passou pela verificacao: nao rebaixa para "Nao verificado".
+  if (member.roles.cache.has(unverifiedRoleId) || member.roles.cache.has(config.memberRoleId)) {
+    return;
+  }
+
+  const botMember = await member.guild.members.fetchMe();
+  const role = await member.guild.roles.fetch(unverifiedRoleId).catch(() => null);
+  if (!role) {
+    logger.warn("member_entry.unverified_role_add_failed", { reason: "role_not_found", ...logContext });
+    return;
+  }
+  if (!role.editable || botMember.roles.highest.comparePositionTo(role) <= 0) {
+    logger.warn("member_entry.unverified_role_add_failed", { reason: "role_not_manageable", ...logContext });
+    return;
+  }
+
+  await member.roles
+    .add(role, "Entrada no servidor - aguardando verificacao")
+    .then(() => {
+      logger.info("member_entry.unverified_role_added", logContext);
+    })
+    .catch((error) => {
+      logger.error("member_entry.unverified_role_add_failed", error, logContext);
+    });
 }
 
 export async function announceMemberExit(member: GuildMember | PartialGuildMember, store: Parameters<SlashCommand["execute"]>[1]["store"]) {
@@ -385,6 +429,7 @@ async function applyMemberRoles(
   recruitMember: GuildMember,
   founder: GuildMember,
   memberRoleId: string,
+  unverifiedRoleId: string,
   store: Parameters<SlashCommand["execute"]>[1]["store"],
   reason: string,
   logContext: Record<string, unknown>
@@ -433,6 +478,46 @@ async function applyMemberRoles(
         ...logContext
       });
     });
+  }
+
+  // O membro deixou de ser "Nao verificado" ao ganhar o cargo `member`.
+  // Idempotente: so remove se ainda tiver o cargo. Falha vira log e nao
+  // reverte a verificacao/recrutamento (cargo `member` e pontos ja gravados).
+  if (unverifiedRoleId && recruitMember.roles.cache.has(unverifiedRoleId)) {
+    const unverifiedRole = await guild.roles.fetch(unverifiedRoleId).catch(() => null);
+    if (
+      unverifiedRole &&
+      unverifiedRole.editable &&
+      botMember.roles.highest.comparePositionTo(unverifiedRole) > 0
+    ) {
+      await recruitMember.roles
+        .remove(unverifiedRole, reason)
+        .then(() => {
+          logger.info("member_roles.unverified_role_removed", {
+            guildId,
+            userId: recruitMember.id,
+            userTag: recruitMember.user.tag,
+            unverifiedRoleId,
+            ...logContext
+          });
+        })
+        .catch((error) => {
+          logger.error("member_roles.unverified_role_remove_failed", error, {
+            guildId,
+            userId: recruitMember.id,
+            unverifiedRoleId,
+            ...logContext
+          });
+        });
+    } else {
+      logger.warn("member_roles.unverified_role_remove_failed", {
+        reason: "role_not_manageable",
+        guildId,
+        userId: recruitMember.id,
+        unverifiedRoleId,
+        ...logContext
+      });
+    }
   }
 
   return { ok: true, rankName: baseRank.name };
@@ -503,6 +588,7 @@ async function processVerifyMemberJob(client: Client, store: CommandStore, job: 
     recruitMember as GuildMember,
     founder,
     config.memberRoleId,
+    config.unverifiedRoleId,
     store,
     `Verificacao direta por ${founder.user.tag}`,
     {
@@ -606,6 +692,7 @@ async function processApproveRecruitmentJob(client: Client, store: CommandStore,
     recruitMember as GuildMember,
     founder,
     config.memberRoleId,
+    config.unverifiedRoleId,
     store,
     `Recrutamento aprovado por ${founder.user.tag}`,
     { source: job.id, recruitmentId: recruitment.id }

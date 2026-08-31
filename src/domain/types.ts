@@ -1,6 +1,8 @@
 export const DEFAULT_RECRUITER_ROLE_ID = "1520118976087199754";
 export const DEFAULT_FOUNDER_ROLE_ID = "1487882833761407007";
 export const DEFAULT_MEMBER_ROLE_ID = "1488092923588247563";
+/** Cargo dado na entrada e removido quando o membro e verificado/recrutado. */
+export const DEFAULT_UNVERIFIED_ROLE_ID = "1542080691288940604";
 export const DEFAULT_RECRUITMENT_ANNOUNCEMENT_CHANNEL_ID = "1522080152094249140";
 export const MEMBER_VERIFICATION_CHANNEL_ID = "1534723901421256784";
 export const MEMBER_EXIT_CHANNEL_ID = "1534735482460831884";
@@ -48,7 +50,7 @@ export const DEFAULT_HIERARCHY_ROLES: HierarchyRole[] = [
   { name: "God", roleId: "1488086504202043502", points: 2160, order: 21 }
 ];
 
-export type RoleConfigKey = "recruiter" | "founder" | "member";
+export type RoleConfigKey = "recruiter" | "founder" | "member" | "unverified";
 export type ChannelConfigKey =
   | "approval"
   | "recruitment"
@@ -67,6 +69,12 @@ export interface GuildConfig {
   recruiterRoleId: string;
   founderRoleId: string;
   memberRoleId: string;
+  /**
+   * Cargo aplicado na entrada de qualquer membro e removido quando ele e
+   * verificado/recrutado (ganha o cargo `member`). Editavel pelo painel
+   * (`dragons-platform`) e pelo `/config set-role unverified`.
+   */
+  unverifiedRoleId: string;
   approvalChannelId: string | null;
   recruitmentAnnouncementChannelId: string;
   blacklistLogChannelId: string;
