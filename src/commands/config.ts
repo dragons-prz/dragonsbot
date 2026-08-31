@@ -26,7 +26,8 @@ export const configCommand: SlashCommand = {
             .addChoices(
               { name: "Recruiter", value: "recruiter" },
               { name: "Founder", value: "founder" },
-              { name: "Member", value: "member" }
+              { name: "Member", value: "member" },
+              { name: "Unverified (cargo inicial da entrada)", value: "unverified" }
             )
         )
         .addRoleOption((option) =>
@@ -158,6 +159,7 @@ export const configCommand: SlashCommand = {
         `Cargo recruiter: <@&${config.recruiterRoleId}> (\`${config.recruiterRoleId}\`)`,
         `Cargo founder: <@&${config.founderRoleId}> (\`${config.founderRoleId}\`)`,
         `Cargo member: <@&${config.memberRoleId}> (\`${config.memberRoleId}\`)`,
+        `Cargo unverified: <@&${config.unverifiedRoleId}> (\`${config.unverifiedRoleId}\`)`,
         `Canal approval: ${config.approvalChannelId ? `<#${config.approvalChannelId}> (\`${config.approvalChannelId}\`)` : "nao configurado"}`,
         `Canal recruitment: <#${config.recruitmentAnnouncementChannelId}> (\`${config.recruitmentAnnouncementChannelId}\`)`,
         `Canal blacklist: <#${config.blacklistLogChannelId}> (\`${config.blacklistLogChannelId}\`)`,

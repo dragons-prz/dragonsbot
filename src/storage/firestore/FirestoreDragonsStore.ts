@@ -16,6 +16,7 @@ import {
   DEFAULT_FOUNDER_ROLE_ID,
   DEFAULT_MEMBER_ROLE_ID,
   DEFAULT_RECRUITER_ROLE_ID,
+  DEFAULT_UNVERIFIED_ROLE_ID,
   DEFAULT_RECRUITMENT_ANNOUNCEMENT_CHANNEL_ID,
   GuildConfig,
   HierarchyRole,
@@ -78,6 +79,7 @@ interface GuildConfigDocument {
   recruiterRoleId: string;
   founderRoleId: string;
   memberRoleId: string;
+  unverifiedRoleId?: string;
   approvalChannelId: string | null;
   recruitmentAnnouncementChannelId?: string;
   blacklistLogChannelId?: string;
@@ -350,6 +352,11 @@ export class FirestoreDragonsStore implements DragonsStore {
       await ref.update({ memberExitChannelId: data.memberExitChannelId });
     }
 
+    if (!data.unverifiedRoleId) {
+      data.unverifiedRoleId = DEFAULT_UNVERIFIED_ROLE_ID;
+      await ref.update({ unverifiedRoleId: data.unverifiedRoleId });
+    }
+
     if (data.recruitmentPoints === undefined) {
       data.recruitmentPoints = RECRUITMENT_POINTS;
       await ref.update({ recruitmentPoints: data.recruitmentPoints });
@@ -369,7 +376,8 @@ export class FirestoreDragonsStore implements DragonsStore {
     const fieldByKey: Record<RoleConfigKey, keyof GuildConfigDocument> = {
       recruiter: "recruiterRoleId",
       founder: "founderRoleId",
-      member: "memberRoleId"
+      member: "memberRoleId",
+      unverified: "unverifiedRoleId"
     };
 
     await this.guildConfigRef(guildId).update({ [fieldByKey[key]]: roleId });
@@ -2066,6 +2074,7 @@ export class FirestoreDragonsStore implements DragonsStore {
       recruiterRoleId: DEFAULT_RECRUITER_ROLE_ID,
       founderRoleId: DEFAULT_FOUNDER_ROLE_ID,
       memberRoleId: DEFAULT_MEMBER_ROLE_ID,
+      unverifiedRoleId: DEFAULT_UNVERIFIED_ROLE_ID,
       approvalChannelId: null,
       recruitmentAnnouncementChannelId: DEFAULT_RECRUITMENT_ANNOUNCEMENT_CHANNEL_ID,
       blacklistLogChannelId: DEFAULT_BLACKLIST_LOG_CHANNEL_ID,
@@ -2082,6 +2091,7 @@ export class FirestoreDragonsStore implements DragonsStore {
       recruiterRoleId: data.recruiterRoleId,
       founderRoleId: data.founderRoleId,
       memberRoleId: data.memberRoleId,
+      unverifiedRoleId: data.unverifiedRoleId ?? DEFAULT_UNVERIFIED_ROLE_ID,
       approvalChannelId: data.approvalChannelId ?? null,
       recruitmentAnnouncementChannelId: data.recruitmentAnnouncementChannelId ?? DEFAULT_RECRUITMENT_ANNOUNCEMENT_CHANNEL_ID,
       blacklistLogChannelId: data.blacklistLogChannelId ?? DEFAULT_BLACKLIST_LOG_CHANNEL_ID,

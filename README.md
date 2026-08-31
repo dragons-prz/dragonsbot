@@ -76,19 +76,25 @@ npm start
 
 ## Comandos
 
-### `/config set-role tipo:<recruiter|founder|member> role:<cargo>`
+### `/config set-role tipo:<recruiter|founder|member|unverified> role:<cargo>`
 
 Configura um cargo usado pelo fluxo do bot. Apenas administradores podem usar.
+Todos tambem sao editaveis pelo painel (`dragons-platform`) no documento
+`guildConfigs/{guildId}`.
 
 - `recruiter`: cargo que pode usar `/recrutar`.
 - `founder`: cargo que pode aprovar recrutamentos.
 - `member`: cargo dado ao usuario aprovado.
+- `unverified`: cargo "Nao verificado" aplicado na entrada de **qualquer**
+  membro e removido automaticamente quando ele ganha o cargo `member`
+  (verificacao direta do Founder, recrutamento de Area ou de Familia).
 
 Valores iniciais usados quando o servidor ainda nao tem configuracao salva:
 
 - recruiter: `1520118976087199754`
 - founder: `1487882833761407007`
 - member: `1488092923588247563`
+- unverified: `1542080691288940604`
 
 ### `/config set-channel tipo:approval channel:<canal>`
 
@@ -192,16 +198,21 @@ Regras:
 - o usuario nao pode estar na blacklist
 - se houver recrutamento pendente para o mesmo usuario, a verificacao direta e bloqueada
 
-Quando executado com sucesso, o bot aplica o cargo `member`, garante o perfil do membro no Firestore e aplica o rank base configurado na hierarquia.
+Quando executado com sucesso, o bot aplica o cargo `member`, garante o perfil do membro no Firestore, aplica o rank base configurado na hierarquia e remove o cargo `unverified` ("Nao verificado").
 
 Se existir recrutamento pendente para o usuario, a verificacao direta e bloqueada para preservar o fluxo de pontos do recrutador.
 
 ## Entrada e verificacao por ticket
 
-Quando um membro entra no servidor, o bot so **registra a entrada**
-(`MemberEntry`) — nao ha mais card automatico na fila de verificacao. A porta
-unica e um **painel de texto "Verificar-se"** (um painel com `kind: "text"` e
-um botao com a acao `verification-ticket`).
+Quando um membro entra no servidor, o bot **registra a entrada**
+(`MemberEntry`) e aplica o cargo **"Nao verificado"**
+(`guildConfigs/{guildId}.unverifiedRoleId`, default `1542080691288940604`,
+editavel pelo painel ou por `/config set-role unverified`). Esse cargo e
+removido automaticamente quando o membro ganha o cargo `member` (verificacao
+direta do Founder ou recrutamento de Area/Familia aprovado). Nao ha mais card
+automatico na fila de verificacao — a porta unica e um **painel de texto
+"Verificar-se"** (um painel com `kind: "text"` e um botao com a acao
+`verification-ticket`).
 
 Fluxo (spec: `docs/specs/2026-08-30-verificacao-recrutamento-por-ticket.md`):
 
@@ -398,7 +409,8 @@ Ao **confirmar**, a acao entra na fila `memberActionJobs` (que serializa as
 escritas) e o bot:
 
 - muda o recrutamento para `approved`
-- aplica o cargo `member` e o **rank base** (`Novato`)
+- aplica o cargo `member` e o **rank base** (`Novato`), e remove o cargo
+  `unverified` ("Nao verificado") se o membro ainda o tiver
 - aplica o cargo de iniciante escolhido (nenhum, se a etapa 1 usou "Nenhum
   cargo") e os cargos de todas as areas escolhidas
 - credita ao recrutador os pontos congelados na ficha (soma dos pontos das areas,
@@ -578,6 +590,8 @@ Eventos principais:
 - `verification_ticket.recruited_family` / `verification_ticket.recruited_area` / `verification_ticket.finalize_failed`
 - `verification_ticket.link_failed`
 - `member_entry.registered` (entrada de membro — sem mais card automatico)
+- `member_entry.unverified_role_added` / `member_entry.unverified_role_add_failed` (cargo "Nao verificado" na entrada)
+- `member_roles.unverified_role_removed` / `member_roles.unverified_role_remove_failed` (remocao ao virar `member`)
 - `interaction.select.received` / `interaction.select.completed`
 - `interaction.modal.received` / `interaction.modal.completed` / `interaction.modal.unknown`
 - `member_action_job.failed`
