@@ -49,6 +49,25 @@ const BUTTON_STYLE_MAP: Record<PanelButtonStyle, ButtonStyle> = {
 const PANEL_JOB_STALE_AFTER_MS = 5 * 60 * 1000;
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
 const CLEAR_COLOR_KEYWORDS = new Set(["limpar", "nenhuma", "remover", "none"]);
+const EPHEMERAL_EMBED_DESCRIPTION_MAX = 4096;
+
+function splitEphemeralResponse(response: string): string[] {
+  const chunks: string[] = [];
+  let remaining = response;
+
+  while (remaining.length > EPHEMERAL_EMBED_DESCRIPTION_MAX) {
+    const candidate = remaining.slice(0, EPHEMERAL_EMBED_DESCRIPTION_MAX + 1);
+    const breakAt = Math.max(candidate.lastIndexOf("\n\n"), candidate.lastIndexOf("\n"));
+    const cutAt = breakAt > 0 ? breakAt : EPHEMERAL_EMBED_DESCRIPTION_MAX;
+    chunks.push(remaining.slice(0, cutAt).trimEnd());
+    remaining = remaining.slice(cutAt).trimStart();
+  }
+
+  if (remaining.length > 0 || chunks.length === 0) {
+    chunks.push(remaining);
+  }
+  return chunks;
+}
 
 /** `true` quando o painel nao tem nenhum bloco para renderizar/publicar. */
 export function panelIsEmpty(panel: PanelConfig): boolean {
@@ -160,14 +179,22 @@ async function dispatchPanelAction(
   panelId: string
 ): Promise<void> {
   if (action.type === "reply") {
-    const responseEmbed = new EmbedBuilder().setDescription(action.response || "​");
-    if (action.responseImageUrl) {
-      responseEmbed.setImage(action.responseImageUrl);
+    const chunks = splitEphemeralResponse(action.response || "​");
+    for (const [index, chunk] of chunks.entries()) {
+      const responseEmbed = new EmbedBuilder().setDescription(chunk);
+      if (index === 0 && action.responseImageUrl) {
+        responseEmbed.setImage(action.responseImageUrl);
+      }
+      if (action.responseColor) {
+        responseEmbed.setColor(action.responseColor as ColorResolvable);
+      }
+
+      if (index === 0) {
+        await interaction.reply({ embeds: [responseEmbed], flags: MessageFlags.Ephemeral });
+      } else {
+        await interaction.followUp({ embeds: [responseEmbed], flags: MessageFlags.Ephemeral });
+      }
     }
-    if (action.responseColor) {
-      responseEmbed.setColor(action.responseColor as ColorResolvable);
-    }
-    await interaction.reply({ embeds: [responseEmbed], flags: MessageFlags.Ephemeral });
     return;
   }
 
