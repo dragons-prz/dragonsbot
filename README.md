@@ -106,6 +106,7 @@ Configura um canal usado pelo bot. Apenas administradores podem usar.
 /config set-channel tipo:blacklist channel:#blacklist-logs
 /config set-channel tipo:verification channel:#fila-de-verificacao
 /config set-channel tipo:exit channel:#saidas
+/config set-channel tipo:entry channel:#entradas
 ```
 
 Todos os canais ficam salvos no documento `guildConfigs/{guildId}` do Firestore e podem tambem ser editados pelo painel (`dragons-platform`). Quando um campo ainda nao existe no documento, o bot preenche com o default abaixo na primeira leitura.
@@ -117,6 +118,7 @@ O fluxo atual envia a aprovacao por DM para todos os membros com cargo `founder`
 | `recruitment` | anuncio quando um recrutamento e aprovado | `1522080152094249140` |
 | `verification` | fila de verificacao de novos membros | `1534723901421256784` |
 | `exit` | registro de saida de membros | `1534735482460831884` |
+| `entry` | registro de entrada de membros | `1551080045357965313` |
 | `blacklist` | logs de adicao/remocao da blacklist | `1541992716496273478` |
 
 ### `/config set-number tipo:points valor:<inteiro>`
@@ -260,6 +262,14 @@ Quando um membro sai do servidor, o bot envia um card no canal `exit` (ver `/con
 - cargos conhecidos no momento do evento
 
 O Discord nao informa pelo evento se a pessoa saiu sozinha, foi expulsa ou banida.
+
+## Entradas
+
+Quando um membro entra no servidor, o bot envia no canal `entry` (ver
+`/config set-channel`) um card no mesmo formato do log de saida, com avatar,
+nome, mencao, ID copiavel, data/hora da entrada, status conhecido, recrutador
+creditado e cargos conhecidos no momento do evento. A entrada continua sem
+card automatico de verificacao; o membro usa o painel **Verificar-se**.
 
 ## Fila assincrona
 
@@ -589,7 +599,8 @@ Eventos principais:
 - `verification_ticket.escalated` / `verification_ticket.escalate_failed` / `verification_ticket.escalation_tick_failed`
 - `verification_ticket.recruited_family` / `verification_ticket.recruited_area` / `verification_ticket.finalize_failed`
 - `verification_ticket.link_failed`
-- `member_entry.registered` (entrada de membro — sem mais card automatico)
+- `member_entry.registered` / `member_entry.announced` (registro e log da entrada — sem card automatico de verificacao)
+- `member_entry.channel_not_found` / `member_entry.announcement_failed`
 - `member_entry.unverified_role_added` / `member_entry.unverified_role_add_failed` (cargo "Nao verificado" na entrada)
 - `member_roles.unverified_role_removed` / `member_roles.unverified_role_remove_failed` (remocao ao virar `member`)
 - `interaction.select.received` / `interaction.select.completed`

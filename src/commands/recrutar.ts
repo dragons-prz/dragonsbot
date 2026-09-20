@@ -250,7 +250,7 @@ export async function announceNewMember(member: GuildMember, store: Parameters<S
   }
 
   const joinedAt = member.joinedAt?.toISOString() ?? new Date().toISOString();
-  await store.createOrUpdateMemberEntry({
+  const entry = await store.createOrUpdateMemberEntry({
     guildId: member.guild.id,
     userId: member.id,
     joinedAt
@@ -263,6 +263,56 @@ export async function announceNewMember(member: GuildMember, store: Parameters<S
   });
 
   await applyUnverifiedRole(member, store);
+
+  const config = await store.getGuildConfig(member.guild.id);
+  const channel = await member.guild.channels.fetch(config.memberEntryChannelId).catch(() => null);
+  if (!channel?.isTextBased() || !("send" in channel)) {
+    logger.warn("member_entry.channel_not_found", {
+      guildId: member.guild.id,
+      userId: member.id,
+      userTag: member.user.tag,
+      channelId: config.memberEntryChannelId
+    });
+    return;
+  }
+
+  const roles = member.roles.cache
+    .filter((role) => role.id !== member.guild.id)
+    .sort((a, b) => b.position - a.position)
+    .map((role) => `<@&${role.id}>`)
+    .slice(0, 20);
+
+  const embed = new EmbedBuilder()
+    .setTitle("Membro entrou no servidor")
+    .setColor(0x2f9e44)
+    .setThumbnail(member.user.displayAvatarURL({ size: 256 }))
+    .addFields(
+      { name: "Usuario", value: `${member.user.tag}\n<@${member.id}>`, inline: true },
+      { name: "ID copiavel", value: `\`${member.id}\``, inline: true },
+      { name: "Entrou em", value: formatTimestamp(entry.joinedAt), inline: false },
+      { name: "Status conhecido", value: entry.status, inline: true },
+      {
+        name: "Recrutador creditado",
+        value: entry.recruiterUserId ? `<@${entry.recruiterUserId}>` : "Nenhum",
+        inline: true
+      },
+      {
+        name: `Cargos conhecidos (${roles.length})`,
+        value: roles.length > 0 ? roles.join(" ") : "Nenhum cargo registrado no evento.",
+        inline: false
+      }
+    )
+    .setTimestamp();
+
+  await channel.send({ embeds: [embed] });
+  logger.info("member_entry.announced", {
+    guildId: member.guild.id,
+    userId: member.id,
+    userTag: member.user.tag,
+    channelId: config.memberEntryChannelId,
+    entryStatus: entry.status,
+    joinedAt: entry.joinedAt
+  });
 }
 
 /**

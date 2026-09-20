@@ -48,7 +48,8 @@ export const configCommand: SlashCommand = {
               { name: "Recruitment", value: "recruitment" },
               { name: "Blacklist", value: "blacklist" },
               { name: "Verification", value: "verification" },
-              { name: "Exit", value: "exit" }
+              { name: "Exit", value: "exit" },
+              { name: "Entry", value: "entry" }
             )
         )
         .addChannelOption((option) =>
@@ -165,6 +166,7 @@ export const configCommand: SlashCommand = {
         `Canal blacklist: <#${config.blacklistLogChannelId}> (\`${config.blacklistLogChannelId}\`)`,
         `Canal verification: <#${config.memberVerificationChannelId}> (\`${config.memberVerificationChannelId}\`)`,
         `Canal exit: <#${config.memberExitChannelId}> (\`${config.memberExitChannelId}\`)`,
+        `Canal entry: <#${config.memberEntryChannelId}> (\`${config.memberEntryChannelId}\`)`,
         `Pontos por recrutamento: \`${config.recruitmentPoints}\``
       ].join("\n"),
       flags: MessageFlags.Ephemeral
