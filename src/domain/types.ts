@@ -6,13 +6,15 @@ export const DEFAULT_UNVERIFIED_ROLE_ID = "1542080691288940604";
 export const DEFAULT_RECRUITMENT_ANNOUNCEMENT_CHANNEL_ID = "1522080152094249140";
 export const MEMBER_VERIFICATION_CHANNEL_ID = "1534723901421256784";
 export const MEMBER_EXIT_CHANNEL_ID = "1534735482460831884";
+export const MEMBER_ENTRY_CHANNEL_ID = "1551080045357965313";
 export const DEFAULT_BLACKLIST_LOG_CHANNEL_ID = "1541992716496273478";
 export const RECRUITMENT_POINTS = 8;
 
 /**
  * Estas constantes deixaram de ser lidas direto pelo fluxo do bot: agora
  * sao apenas o VALOR PADRAO de campos do `GuildConfig`
- * (`memberVerificationChannelId`, `memberExitChannelId`, `recruitmentPoints`),
+ * (`memberVerificationChannelId`, `memberExitChannelId`,
+ * `memberEntryChannelId`, `recruitmentPoints`),
  * aplicados pela store quando o documento `guildConfigs/{guildId}` ainda nao
  * tem o campo. O painel (`dragons-platform`) edita esses campos; o bot le do
  * config.
@@ -56,7 +58,8 @@ export type ChannelConfigKey =
   | "recruitment"
   | "blacklist"
   | "verification"
-  | "exit";
+  | "exit"
+  | "entry";
 export type NumberConfigKey = "points";
 export type RecruitmentStatus = "pending" | "approved" | "rejected";
 export type RecruitmentKind = "standard" | "credit";
@@ -82,6 +85,8 @@ export interface GuildConfig {
   memberVerificationChannelId: string;
   /** Canal onde o card de saida de membro e postado. */
   memberExitChannelId: string;
+  /** Canal onde o card de entrada de membro e postado. */
+  memberEntryChannelId: string;
   /** Pontos creditados ao recrutador quando um recrutamento e aprovado. */
   recruitmentPoints: number;
   hierarchySeeded: boolean;

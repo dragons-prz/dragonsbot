@@ -20,6 +20,7 @@ import {
   DEFAULT_RECRUITMENT_ANNOUNCEMENT_CHANNEL_ID,
   GuildConfig,
   HierarchyRole,
+  MEMBER_ENTRY_CHANNEL_ID,
   MEMBER_EXIT_CHANNEL_ID,
   MEMBER_VERIFICATION_CHANNEL_ID,
   NumberConfigKey,
@@ -85,6 +86,7 @@ interface GuildConfigDocument {
   blacklistLogChannelId?: string;
   memberVerificationChannelId?: string;
   memberExitChannelId?: string;
+  memberEntryChannelId?: string;
   recruitmentPoints?: number;
   hierarchySeeded?: boolean;
 }
@@ -352,6 +354,11 @@ export class FirestoreDragonsStore implements DragonsStore {
       await ref.update({ memberExitChannelId: data.memberExitChannelId });
     }
 
+    if (!data.memberEntryChannelId) {
+      data.memberEntryChannelId = MEMBER_ENTRY_CHANNEL_ID;
+      await ref.update({ memberEntryChannelId: data.memberEntryChannelId });
+    }
+
     if (!data.unverifiedRoleId) {
       data.unverifiedRoleId = DEFAULT_UNVERIFIED_ROLE_ID;
       await ref.update({ unverifiedRoleId: data.unverifiedRoleId });
@@ -390,7 +397,8 @@ export class FirestoreDragonsStore implements DragonsStore {
       recruitment: "recruitmentAnnouncementChannelId",
       blacklist: "blacklistLogChannelId",
       verification: "memberVerificationChannelId",
-      exit: "memberExitChannelId"
+      exit: "memberExitChannelId",
+      entry: "memberEntryChannelId"
     };
 
     await this.ensureGuildConfig(guildId);
@@ -2080,6 +2088,7 @@ export class FirestoreDragonsStore implements DragonsStore {
       blacklistLogChannelId: DEFAULT_BLACKLIST_LOG_CHANNEL_ID,
       memberVerificationChannelId: MEMBER_VERIFICATION_CHANNEL_ID,
       memberExitChannelId: MEMBER_EXIT_CHANNEL_ID,
+      memberEntryChannelId: MEMBER_ENTRY_CHANNEL_ID,
       recruitmentPoints: RECRUITMENT_POINTS,
       hierarchySeeded: false
     };
@@ -2097,6 +2106,7 @@ export class FirestoreDragonsStore implements DragonsStore {
       blacklistLogChannelId: data.blacklistLogChannelId ?? DEFAULT_BLACKLIST_LOG_CHANNEL_ID,
       memberVerificationChannelId: data.memberVerificationChannelId ?? MEMBER_VERIFICATION_CHANNEL_ID,
       memberExitChannelId: data.memberExitChannelId ?? MEMBER_EXIT_CHANNEL_ID,
+      memberEntryChannelId: data.memberEntryChannelId ?? MEMBER_ENTRY_CHANNEL_ID,
       recruitmentPoints: data.recruitmentPoints ?? RECRUITMENT_POINTS,
       hierarchySeeded: data.hierarchySeeded ?? false
     };
